@@ -75,22 +75,29 @@ type PropertySchema struct {
 	Enum        []string `json:"enum,omitempty"`
 }
 
+// completionFn is the signature of a chat-completions call. The engine talks
+// to the LLM exclusively through this, so tests can inject a fake.
+type completionFn func(ctx context.Context, messages []Message, tools []ToolDefinition, temp float32, maxTokens int) (*Message, error)
+
 type WorkflowEngine struct {
 	cfg        *config.Config
 	erpClient  *erp.Client
 	httpClient *http.Client
 	queries    *database.Queries
+	complete   completionFn
 }
 
 func NewWorkflowEngine(cfg *config.Config, erpClient *erp.Client, queries *database.Queries) *WorkflowEngine {
-	return &WorkflowEngine{
-		cfg:        cfg,
-		erpClient:  erpClient,
-		queries:    queries,
+	e := &WorkflowEngine{
+		cfg:       cfg,
+		erpClient: erpClient,
+		queries:   queries,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
 	}
+	e.complete = e.chatCompletions
+	return e
 }
 
 // chatCompletions makes a standard HTTP request to the configured OpenAI-compatible LLM endpoint (NVIDIA NIM).
@@ -187,7 +194,7 @@ func (e *WorkflowEngine) ClassifyIntent(ctx context.Context, state *State) error
 		{Role: "user", Content: lastHumanText},
 	}
 
-	msg, err := e.chatCompletions(ctx, messages, nil, 0.0, 10)
+	msg, err := e.complete(ctx, messages, nil, 0.0, 10)
 	if err != nil {
 		log.Printf("[workflow] ClassifyIntent failed, defaulting to operations: %v", err)
 		state.Intent = "operations"
@@ -239,7 +246,7 @@ func (e *WorkflowEngine) executeGeneralChat(ctx context.Context, state *State) e
 		"Reply briefly and naturally in the language the user used (Arabic or English) without any markdown formatting."
 
 	messages := append([]Message{{Role: "system", Content: systemPrompt}}, state.Messages...)
-	msg, err := e.chatCompletions(ctx, messages, nil, 0.3, 200)
+	msg, err := e.complete(ctx, messages, nil, 0.3, 200)
 	if err != nil {
 		return err
 	}
@@ -359,7 +366,7 @@ func (e *WorkflowEngine) executeOperations(ctx context.Context, state *State) er
 	maxIterations := 4
 	for i := 0; i < maxIterations; i++ {
 		log.Printf("[workflow] Running LLM iteration %d...", i+1)
-		aiMsg, err := e.chatCompletions(ctx, messages, tools, 0.0, 400)
+		aiMsg, err := e.complete(ctx, messages, tools, 0.0, 400)
 		if err != nil {
 			return fmt.Errorf("LLM operations execution call failed: %w", err)
 		}
