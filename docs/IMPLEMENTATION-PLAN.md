@@ -1,5 +1,7 @@
 # Sawt (Go) — Implementation Plan
 
+> **STATUS: EXECUTED 2026-07-03.** All six phases landed as commits `a7f914f` (Phase 0), `1e0c928` (1), `40f405c` (2), `d4e56cc` (3), `a0f5eab` (4), `e6c8823` (5), `2dbaa80` (6). The gap table in [`BLUEPRINT.md`](BLUEPRINT.md) §3 reflects the post-execution state. What remains is **live verification (M9)** — real WhatsApp number, deployed `mshalia`, real LLM/STT keys — plus the `mshalia`-side tool implementations noted in P5-4. This document is kept as the record of what was planned vs. delivered.
+
 > Source: the 2026-07 codebase audit reflected in [`BLUEPRINT.md`](BLUEPRINT.md) §3/§9/§11 (current-state gap table, security, risks).
 > Scope: this plan closes the gap between the current Go binary and a system safe to point at real WhatsApp traffic and a live `mshalia`. It does **not** cover `mshalia`-side work (Gateway policy enforcement, new tool implementations there) — that's tracked in `mshalia`, not here.
 > Ordering principle: **fix what's cheap now and expensive later first.** Phase 0 and 1 are almost pure risk-reduction with no new user-facing behavior; do them before adding any more scope (M6 accounting/administration), otherwise every new feature gets built on top of the same missing safety net.

@@ -41,12 +41,15 @@ main.go: handleIncomingMessage()
   │  1. look up / auto-create wa_contacts row; drop if disabled or group
   │  2. if audio: download → ffmpeg OGG→WAV → STT cascade
   │  3. resolve actor identity: erpClient.ResolveIdentity(phone) → mshalia (HMAC POST)
-  │  4. build a **single-turn** State{Messages: [this message only]} and call wfEngine.Execute()
-  │     → ClassifyIntent (1 LLM call) → route to operations | accounting(stub) | administration(stub) | general chat
-  │     → operations: bounded 4-iteration tool-calling loop against 4 ERP tools
-  │  5. if original message was audio: TTS cascade → ffmpeg WAV→Opus
-  │  6. send reply (text or voice note) back over the same whatsmeow socket
-  │  7. write one row to wa_activity (transcript, reply, timings, tool_calls) for the dashboard feed
+  │  4. load conversation memory (last 8 turns + rolling summary) and call wfEngine.Execute()
+  │     → pending confirmation? resolve it first (yes → execute parked tool; else cancel)
+  │     → ClassifyIntent (1 LLM call) → route to operations | accounting | administration | general chat
+  │     → bounded 4-iteration tool-calling loop over that agent's tools;
+  │       medium/high-risk calls park in pending_confirmations and ask the user first
+  │  5. persist the exchange to conversation_turns (summary folds in background)
+  │  6. if original message was audio: TTS cascade → ffmpeg WAV→Opus
+  │  7. send reply (text or voice note) back over the same whatsmeow socket
+  │  8. write one row to wa_activity (transcript, reply, timings, tool_calls) for the dashboard feed
   ▼
 WhatsApp reply (text + voice)
                                     │ tool calls (HMAC-signed service secret + actingUserUid + orgId)
@@ -54,7 +57,7 @@ WhatsApp reply (text + voice)
                      mshalia /api/agent/v1/*  → lib/api/* → Firestore
 ```
 
-**What this eliminates from the old design:** the gateway↔backend signed HTTP channel (`/webhook/inbound` ↔ `/send`, `GATEWAY_SHARED_SECRET`) no longer exists — there's nothing to forward to, it's the same process. That channel-contract section of the old blueprint is obsolete. **The `GATEWAY_SHARED_SECRET` env var is still read into `config.Config` (`config/config.go:13,90`) but is never referenced anywhere else in the codebase — it is dead configuration left over from the old split and should be deleted.**
+**What this eliminates from the old design:** the gateway↔backend signed HTTP channel (`/webhook/inbound` ↔ `/send`, `GATEWAY_SHARED_SECRET`) no longer exists — there's nothing to forward to, it's the same process. That channel-contract section of the old blueprint is obsolete, and the dead `GATEWAY_SHARED_SECRET` config was removed in Phase 0.
 
 **What's unchanged:** the *external* signed channel from this binary to `mshalia`'s ERP Agent Gateway (`x-swa-signature` / `x-swa-timestamp`, `HMAC-SHA256(secret, "{timestamp}.{rawBody}")`, secret = `AGENT_GATEWAY_SECRET`) — implemented identically in `internal/erp/client.go`.
 
@@ -116,20 +119,16 @@ The original M0–M7 numbering is preserved for continuity with `SPRINT-01.md`, 
 
 ## 5. Agent Architecture (Go tool-calling loop)
 
-There is no LangGraph and no supervisor/subgraph compilation anymore. The equivalent logic is a plain Go control flow in `internal/workflow/engine.go`:
+There is no LangGraph and no supervisor/subgraph compilation. The equivalent logic is plain Go control flow in `internal/workflow/engine.go`, with agents declared in `internal/workflow/tools.go`:
 
 ```
-ClassifyIntent (1 LLM call, no tools) → route → { operations (tool loop) | accounting (stub) | administration (stub) | other (general chat) } → FinalReply
+resolvePendingConfirmation → ClassifyIntent (1 LLM call, no tools) → route → executeToolLoop(agentSpec) | general chat → FinalReply
 ```
 
-- **Operations** — the only fully wired path: horses, care plans, tasks. Bounded to `maxIterations = 4` tool-calling rounds against 4 tools (`get_horse`, `get_care_plan`, `list_tasks`, `update_task_status`).
-- **Accounting / Administration** — routing exists (`ClassifyIntent` can select them), but both branches immediately return a canned apology string. No tools, no subgraph, nothing to extend yet.
-- **Other** — a plain single-call general-chat completion, no tools.
-
-What's intentionally *not* present compared to the old LangGraph design, and why it matters:
-- No `recursion_limit` framework beyond the hardcoded `maxIterations = 4` loop bound (fine as a stopgap, but not configurable per-agent).
-- No compiled/reusable subgraph registration — adding accounting/administration tools means writing a new Go function similar to `executeOperations`, not registering a declarative tool pack. This is a real extensibility gap the original blueprint's "new agents register declaratively" principle assumed away.
-- No `thread_id`-scoped checkpointer — see the conversation-memory finding in §3. This is the most consequential omission: without it, "Operations" tool loop and general chat both reason from a single message every time.
+- Each agent is a declarative `agentSpec` *(name + default persona prompt + tool list)*: **operations** (4 tools), **accounting** (4 tools, financial writes `high` risk), **administration** (4 read tools). Adding an agent or tool means adding a spec entry + a risk tag — the router (`Execute`) never changes, matching the original "register declaratively" principle.
+- Each routed request sees **only that agent's tools** (verified by test).
+- The loop is bounded at `maxIterations = 4` (not yet configurable per-agent); tool errors are fed back to the model as tool messages for self-correction.
+- Cross-turn state lives in Postgres: `conversation_turns` (last 8 replayed) + `conversation_state` (rolling summary) + `pending_confirmations` (the pause-and-resume equivalent of LangGraph's `interrupt()`).
 
 ---
 
@@ -180,11 +179,12 @@ interface ToolDefinition<I, O> {
 - **Channel to `mshalia`:** HMAC-SHA256 signed (`internal/erp/client.go`), same contract as before. *Not independently verified in this audit that `mshalia`'s side still enforces the ±5 min timestamp skew — that check lives in `mshalia`, out of this repo.*
 - **ERP access:** unchanged — Gateway-only writes, no raw `firebase-admin` in this repo (it never had any), least-privilege service identity via the shared secret.
 - **Prompt-injection:** the model only calls typed tools via the OpenAI tool-calling schema in `engine.go` — never raw queries; unchanged design principle, still followed.
-- **Dashboard auth — 🛑 critical:** `main.go:60-75` hardcodes and auto-seeds a default admin login (`osos` / `Password@2026`) in source. This must be removed before any deployment anyone else can reach.
-- **CSRF:** none. State-changing dashboard POST routes rely only on `SameSite=Lax`.
-- **Rate limiting:** none, anywhere — not on the dashboard login, not per-WhatsApp-number on the message pipeline.
-- **PII:** voice/transcripts are stored indefinitely in plaintext in `wa_activity` — no encryption-at-rest story beyond whatever Neon provides by default, no retention/purge policy, no log redaction.
-- **Abuse:** no rate limits per number; any WhatsApp number that messages the bot gets a reply (identity resolution gates *ERP tool access*, not whether the bot responds at all).
+- **Dashboard auth:** admin credentials come from `ADMIN_USERNAME`/`ADMIN_PASSWORD` or a generated one-time password printed once at first boot; bcrypt-hashed at rest; login rate-limited (10/5min per IP); sessions are HMAC-signed cookies (set `SESSION_SECRET` in prod).
+- **CSRF:** double-submit cookie token required on all state-changing dashboard POSTs.
+- **Rate limiting:** login per-IP + inbound WhatsApp per-chat (8/min, in-memory, single-instance).
+- **PII:** `RETENTION_DAYS` (default 90) purges STT/TTS history and conversation turns and redacts `wa_activity` transcripts in place daily; encryption-at-rest and region pinning remain whatever Neon provides.
+- **Abuse:** per-number throttling built; identity resolution still gates *ERP tool access*, not whether the bot replies at all — an allow-list mode for who gets any reply is a possible future tightening.
+- **Risky writes:** medium/high-risk tools never execute without an explicit user confirmation on the following message (10-min TTL, audited).
 
 ---
 
@@ -192,7 +192,7 @@ interface ToolDefinition<I, O> {
 
 Persona: a seasoned operations manager. Infer from context; ask the single most useful question only when blocked; restate high-risk/financial actions for confirmation; prevent errors (no two horses in one stall without explicit override); one-line "what changed"; recover gracefully. Replies short, voice-friendly (no markdown), in the user's language.
 
-**Status check against the current implementation:** the persona's system prompt (`main.go:84`, also stored in the `agents` table) still asks the model to behave this way, and the prompt text itself is intact. But **"memory resolves pronouns across turns" does not hold today** — see §3. Any conversational behavior that depends on remembering a previous message (confirmation restatement across a turn boundary, pronoun resolution, "what changed" relative to an earlier state) cannot work until conversation memory is implemented, regardless of what the system prompt asks for.
+**Status check against the current implementation:** built. The last 8 turns are replayed per chat (plus a rolling summary for long threads), so pronoun resolution across turns has real context to work with; high-risk/financial actions are restated verbatim (including amounts) and require an explicit "نعم"/"yes" on the next message before executing. Quality of pronoun resolution and dialect handling still needs live verification (M9).
 
 ---
 
@@ -200,14 +200,13 @@ Persona: a seasoned operations manager. Infer from context; ask the single most 
 
 | Risk | Mitigation |
 |---|---|
-| whatsmeow/WhatsApp ban/instability (SPOF — now also the LLM/dashboard's host) | conservative send patterns; verified-number allow-list; health alerts; database backup; consider a `ChannelPort` abstraction if a second channel (Meta Cloud API) is ever needed |
-| No conversation memory | see M4 in §4 — needs to land before confirmation/approval, since resume-after-confirmation implies *some* persisted turn state |
-| Hardcoded default credential shipping to production | remove before any deployment reachable outside localhost — see [`IMPLEMENTATION-PLAN.md`](IMPLEMENTATION-PLAN.md) Phase 0 |
-| Arabic dialect STT errors | confirmation on risky ops (once built); domain-vocab biasing; entity read-back; text fallback; never act on low confidence |
-| LLM bad tool args / wrong task update | strict JSON-schema tool definitions in `engine.go`; resolve-don't-invent ids (already in the system prompt); confirmation + approval thresholds (still missing, see M4); no post-condition validation implemented |
-| Single LLM provider (NIM only) | no fallback exists today — an outage or key issue takes down all reasoning; add a provider-fallback chain analogous to the STT/TTS cascades |
-| Zero test/CI safety net | any change to `engine.go` or `erp/client.go` today ships with no regression protection against a system that mutates real ERP data |
-| Schema drift | `schema.sql` is idempotent but not versioned — no rollback path for a future column rename/drop |
+| whatsmeow/WhatsApp ban/instability (SPOF — now also the LLM/dashboard's host) | conservative send patterns; per-chat inbound throttle (built); health alerts via `ERROR_WEBHOOK_URL`; device state in Postgres survives redeploys; consider a `ChannelPort` abstraction if a second channel (Meta Cloud API) is ever needed |
+| Arabic dialect STT errors | confirmation on risky ops (built); domain-vocab biasing; entity read-back in confirmation text (built for amounts/ids); text fallback; never act on low confidence — the last remains prompt-level only |
+| LLM bad tool args / wrong task update | strict JSON-schema tool definitions; resolve-don't-invent ids in prompts; risk-gated confirmation with the action restated (built); post-condition validation still not implemented |
+| LLM provider outage | NIM → OpenAI-compatible fallback cascade (built); both down → graceful error reply |
+| Whole stack unverified live | everything above is unit-tested against fakes, not real services — M9 (live verification) is the top-priority next step before onboarding real users |
+| mshalia-side gaps | 8 new tool ids (accounting/administration) and `PermissionScope` enforcement live in the `mshalia` repo and are not yet built there |
+| Schema drift | `schema.sql` is idempotent but not versioned — additive changes only; a rename/drop needs a manual migration story |
 
 ---
 
@@ -216,6 +215,6 @@ Persona: a seasoned operations manager. Infer from context; ask the single most 
 - **[A1]** STT/TTS run in-process on the same host as the WhatsApp socket and dashboard (no separate backend host anymore).
 - **[A2]** WhatsApp users map 1:1 to an ERP `AppUser`/`Client` via phone and must be verified (resolved by `mshalia`) to access ERP tools; unresolved numbers still get a reply, just not tool access.
 - **[A3]** The Go binary runs always-on as a single instance (multi-instance scaling is not yet supported — session secret and in-memory `WhatsAppManager` state are process-local).
-- **[A4]** NVIDIA NIM (OpenAI-compatible) is the only LLM provider today — no fallback, see §9/§11.
-- **[A5]** A configurable SAR amount / risk level is meant to gate auto-execution vs. manager approval, per the original design — **not implemented anywhere in this repo yet**.
+- **[A4]** NVIDIA NIM (OpenAI-compatible) is the primary LLM, with an OpenAI-compatible fallback chain (`OPENAI_API_KEY` + `LLM_FALLBACK_MODEL`).
+- **[A5]** Risk level gates auto-execution vs. user confirmation (built); a configurable SAR amount threshold *within* a risk tier and manager (third-party) approval routing remain future work.
 - **[A6]** Reads may hit Firestore directly via the Gateway's read tools for latency; writes always go through the Gateway — unchanged.
