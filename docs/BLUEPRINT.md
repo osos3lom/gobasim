@@ -66,34 +66,34 @@ WhatsApp reply (text + voice)
 
 Legend: ✅ built · ⚠️ partial · ⛔ missing · 🛑 critical defect (must fix before any real deployment).
 
-*Updated 2026-07 after a full read-through + `go build`/`go vet` pass of the Go codebase. "✅ (unverified live)" = built and internally consistent, but not yet exercised against a real paired WhatsApp number + live `mshalia` + real LLM/STT/TTS credentials in this environment.*
+*Updated 2026-07-03 after executing [`IMPLEMENTATION-PLAN.md`](IMPLEMENTATION-PLAN.md) Phases 0–6 (commits `a7f914f`..`2dbaa80`). "✅ (unverified live)" = built, unit-tested where testable, but not yet exercised against a real paired WhatsApp number + live `mshalia` + real LLM/STT/TTS credentials in this environment.*
 
 | Capability | State | Gap to close |
 |---|---|---|
 | WhatsApp transport | ✅ `internal/whatsmeow/client.go` — Postgres device store, QR + pairing-code linking, reconnect | ban/health monitoring & alerting |
-| In-process pipeline (replaces gateway↔backend channel) | ✅ single binary, single process, no network hop between "gateway" and "brain" | remove dead `GATEWAY_SHARED_SECRET` config |
-| STT | ✅ `internal/speech/stt.go` — 4-provider cascade: Groq Whisper → Hugging Face → Google Cloud STT → local whisper.cpp | Arabic dialect accuracy unverified; never tested live through the tool-calling loop (only the pipeline shape is verified by reading the code) |
-| TTS | ✅ `internal/speech/tts.go` — 3-provider cascade: Google Cloud TTS → Hugging Face Spaces → local gTTS | **deviates from the original design intent** (Habibi/SILMA voice-clone sidecar) — generic TTS voices instead of a branded clone voice; not necessarily wrong, but a deliberate call the team should confirm |
-| Audio transcode | ✅ `internal/audio/audio.go` — ffmpeg OGG/Opus ↔ WAV | no startup check that `ffmpeg` is on `PATH`; first voice note in a fresh environment without it fails (gracefully, with a text error reply, but silently until then) |
-| LLM reasoning + tool-calling | ✅ (unverified live) `internal/workflow/engine.go` — NIM via OpenAI-compatible `chatCompletions`; real intent classification; bounded 4-iteration tool loop | **no provider fallback** — `chatCompletions` hard-errors immediately if `NIM_API_KEY` is unset or NIM is unreachable, unlike STT/TTS which do have real fallback chains; no structured-output response node (plain text only, as designed) |
-| **Conversation memory across turns** | 🛑 **not implemented** — `main.go:316-320` builds `State.Messages` fresh on every inbound message containing **only the current turn's text**; nothing loads prior turns from `wa_activity` or any other store before invoking the workflow engine | this is a **regression**, not just a documented gap — pronoun resolution, "what changed" follow-ups, and any multi-turn conversation described in §10 cannot work today. The "last 6 messages" trim in `engine.go:352-357` operates on messages accumulated *within a single tool-calling invocation* (the assistant/tool turns of that one request), not on real conversation history. There is no Postgres checkpointer, no per-`ChatID` history reload, no summary node |
-| ERP Agent Gateway client (this repo's side) | ✅ (unverified live) `internal/erp/client.go` — HMAC-signed `identity/resolve` + `tools/{toolId}` calls | server-side enforcement (`PermissionScope`, `AssignHorseToStall`/`RecordExpense`, amount/risk thresholds) lives in `mshalia`, out of this repo's scope — unchanged from before, still unverified from this side |
+| In-process pipeline (replaces gateway↔backend channel) | ✅ single binary; dead `GATEWAY_SHARED_SECRET` config removed (Phase 0) | — |
+| STT | ✅ `internal/speech/stt.go` — 4-provider cascade: Groq Whisper → Hugging Face → Google Cloud STT → local whisper.cpp | Arabic dialect accuracy unverified; never tested live through the tool-calling loop |
+| TTS | ✅ `internal/speech/tts.go` — 3-provider cascade: Google Cloud TTS → Hugging Face Spaces → local gTTS | **deviates from the original design intent** (Habibi/SILMA voice-clone sidecar) — generic TTS voices instead of a branded clone voice; a deliberate call the team should confirm |
+| Audio transcode | ✅ `internal/audio/audio.go` — ffmpeg OGG/Opus ↔ WAV; checked at boot, fail-fast (`ALLOW_MISSING_FFMPEG=true` for text-only) (Phase 6) | — |
+| LLM reasoning + tool-calling | ✅ (unverified live) `internal/workflow/engine.go` — provider cascade NIM → OpenAI-compatible fallback (`OPENAI_API_KEY` + `LLM_FALLBACK_MODEL`), real intent classification, bounded 4-iteration tool loop (Phase 4) | structured-output response node (plain text only, as designed); live verification |
+| Conversation memory across turns | ✅ (unverified live) `internal/workflow/memory.go` — last 8 turns replayed from `conversation_turns` per chat; rolling summary folds threads >20 turns via background LLM call; summary injected into system prompts (Phase 2) | live verification of pronoun resolution quality |
+| ERP Agent Gateway client (this repo's side) | ✅ (unverified live) `internal/erp/client.go` — HMAC-signed `identity/resolve` + `tools/{toolId}`, generic over tool id | server-side enforcement (`PermissionScope`, the 8 new accounting/administration tool ids, amount thresholds) lives in `mshalia`, out of this repo's scope |
 | Identity resolution | ✅ (unverified live) resolves on every inbound message via `ResolveIdentity` | no cache/TTL — resolves fresh every message (same gap as before the rewrite) |
-| Confirmation / approval for risky or financial ops (M4) | ⛔ **missing entirely** | `update_task_status` still executes immediately on the LLM's say-so; there is no `requires_approval` concept, no risk/amount threshold, and no pause-and-resume mechanism anywhere in `engine.go` — identical gap to before the rewrite, not yet closed |
-| Accounting agent | ⛔ stubbed | `engine.go:224-227` returns a hardcoded "not connected yet" reply for any accounting-classified intent; no tools exist |
-| Administration agent | ⛔ stubbed | `engine.go:228-231` returns a hardcoded "not connected yet" reply; no tools exist |
-| Dashboard | ✅ `web/server.go` — session-authed login, recent-activity feed, per-contact enable/agent-assignment view, WhatsApp QR/pairing status, agent prompt editor, SSE log stream | no CSRF protection on state-changing routes (see Security below) |
-| "One WhatsApp stack" (old M5 goal) | ✅ **effectively already true** as a side effect of the consolidation — there is no legacy `wa-bot`, no second stack, and the dashboard directly reads/controls the same in-process `whatsmeow` client | — |
-| Database schema | ✅ `schema.sql` embedded (`go:embed`) and executed idempotently (`CREATE TABLE IF NOT EXISTS ...`) on every boot | no versioned migrations — one ever-growing idempotent script, no rollback path, no safe way to rename/alter a column in production without manual intervention |
-| **Default admin credential** | 🛑 **critical security defect** — `main.go:60-75` seeds a real login (`osos` / `Password@2026`) into the `users` table on first boot, with the **plaintext password hardcoded in source** | must not ship: read from env var, or generate+print a random one-time password on first boot and force a change |
-| CSRF protection | ⛔ missing on `/login`, `/dashboard/workflows/update`, `/dashboard/whatsapp/pair-code` | `SameSite=Lax` on the session cookie is not a substitute for a CSRF token |
-| Rate limiting | ⛔ missing everywhere — no login brute-force protection, no per-WhatsApp-number throttling on inbound messages or ERP tool calls | |
-| Session management | ⚠️ HMAC-signed cookie (`web/auth.go`), no encryption, no CSRF token, ephemeral `SESSION_SECRET` regenerated per-process-restart if unset (documented via a log warning) | fine for a single-instance dev deploy; not fine for multi-instance or frequent-restart production |
-| PII / retention controls | ⛔ missing — `wa_activity` stores full transcripts and replies indefinitely, in plaintext, with no purge policy and no redaction | |
-| Observability | ⛔ missing — no trace/request IDs correlated across STT→LLM→TTS→ERP, no error-monitoring integration (Sentry-equivalent); only `log.Printf` to stdout + the dashboard's SSE broker | |
-| Testing | ⛔ **zero automated tests** — no `_test.go` files anywhere in the repo | |
-| CI | ⛔ missing — no `.github/workflows`, nothing gates a bad commit | |
-| Repo hygiene | ⛔ no `.gitignore` — the compiled binary (`sawt-gateway.exe`) and `go.sum` are currently untracked by accident, not by policy; `go.sum` being untracked at all is a reproducible-build gap | |
+| Confirmation / approval for risky or financial ops (M4) | ✅ built (Phase 3) — per-tool risk tags (unknown → medium), medium/high calls park in `pending_confirmations` (10-min TTL), affirmation executes / anything else cancels / expiry cancels silently, full audit trail in `wa_activity.tool_calls` | SAR amount thresholds within a risk tier (all financial writes are simply `high` today); live verification |
+| Accounting agent | ✅ Go-side built (Phase 5) — `list_invoices`, `get_invoice`, `record_expense` (high), `record_payment` (high) | **mshalia-side gateway tools for these ids do not exist yet** — calls will 404 until built in `mshalia` |
+| Administration agent | ✅ Go-side built (Phase 5) — `list_clients`, `get_client`, `list_contracts`, `get_contract` | same: mshalia-side tools pending |
+| Dashboard | ✅ `web/server.go` — session-authed login, activity feed, contact/agent config, WhatsApp pairing, SSE logs; CSRF-protected POSTs (Phase 0) | — |
+| "One WhatsApp stack" (old M5 goal) | ✅ true by construction — one in-process `whatsmeow` client, dashboard controls it directly | — |
+| Database schema | ✅ `schema.sql` embedded, idempotent on boot | no versioned migrations — additive-only; a future rename/drop needs a manual migration story |
+| Default admin credential | ✅ fixed (Phase 0) — seeded from `ADMIN_USERNAME`/`ADMIN_PASSWORD`, or a random one-time password printed once at first boot | — |
+| CSRF protection | ✅ double-submit cookie on `/login`, `workflows/update`, `pair-code` (Phase 0) | — |
+| Rate limiting | ✅ login 10/5min per IP; inbound WhatsApp 8/min per chat with one Arabic warn reply (Phase 0) | limits are in-memory — reset on restart, single-instance only |
+| Session management | ⚠️ HMAC-signed cookie, ephemeral `SESSION_SECRET` if unset (warned at boot) | set `SESSION_SECRET` in prod; still single-instance by design ([A3]) |
+| PII / retention controls | ✅ (Phase 6) `RETENTION_DAYS` (default 90): stt/tts history + conversation turns purged, `wa_activity` transcripts redacted in place, daily | region pinning / encryption-at-rest remain whatever Neon provides |
+| Observability | ✅ (Phase 4) per-message trace id (= WhatsApp message id) on every pipeline log line; `ERROR_WEBHOOK_URL` error/panic reporting with trace attached | metrics/dashboards; LangSmith-style LLM tracing |
+| Testing | ✅ baseline (Phases 1–6) — ~40 unit tests: auth cookies, HMAC contract, intent cleaning, tool-loop bounds, memory, confirmation lifecycle, provider fallback, 7-scenario eval suite | coverage is concentrated in `workflow`/`web`/`erp`; speech/whatsmeow packages untested (need live services) |
+| CI | ✅ `.github/workflows/ci.yml` — build + vet + `test -race -cover` on push/PR | — |
+| Repo hygiene | ✅ `.gitignore` added, `go.sum` tracked (Phase 0) | — |
 
 ---
 
@@ -105,11 +105,12 @@ The original M0–M7 numbering is preserved for continuity with `SPRINT-01.md`, 
 - **M1 — Voice in/out.** ✅ Done, re-implemented in Go (`internal/speech/*`, `internal/audio/audio.go`) instead of Python. **Remaining:** dialect-accuracy tuning; never verified live through the operations tool loop together.
 - **M2 — Real reasoning.** ✅ Built in Go (`internal/workflow/engine.go`), unverified live. **Remaining:** provider fallback (no longer optional — see §3); structured-output response node.
 - **M3 — ERP Agent Gateway MVP (in `mshalia`).** Unchanged from before — this repo's client side (`internal/erp/client.go`) is done and unverified live; the gateway itself lives in `mshalia`, out of this repo.
-- **M4 — Tools + identity + confirmation.** ⚠️ Partially built. Go tool-calling loop + identity resolver present. **Remaining (unchanged, still not started):** human-in-the-loop confirmation for risky/financial ops — `update_task_status` executes immediately. **Also newly discovered:** conversation memory across turns doesn't exist (see §3) — this needs to land before confirmation/approval makes sense, since a resume-after-confirmation flow requires some notion of conversation state surviving between messages. **Done-when:** confirmed, audited, multi-turn, end-to-end — audited ✅, multi-turn ⛔, confirmed ⛔.
-- **M5 — Dashboard convergence.** ✅ **Done**, as a side effect of the consolidation — there is only one WhatsApp stack, and the dashboard already controls it directly. No legacy bot exists in this repo to delete.
-- **M6 — Accounting + Administration agents.** ⛔ Not started. Invoice/payment/vendor/contract/client tools; approval routing; PDF tools.
-- **M7 — Hardening.** ⛔ Not started. Observability (trace IDs, error monitoring), eval suite, CI, deploy story.
-- **M8 — Go rewrite production-readiness debt (new).** 🛑 The security and hygiene gaps this audit found that aren't really "new features" so much as baseline requirements: hardcoded admin credential, CSRF, rate limiting, PII/retention policy, test/CI baseline, `.gitignore`. See [`IMPLEMENTATION-PLAN.md`](IMPLEMENTATION-PLAN.md) for the phased plan — **M8 should be done before M6/M7 get more scope**, since it's cheaper to fix now than after more code is built on top of it.
+- **M4 — Tools + identity + confirmation.** ✅ Built (Phases 2+3), unverified live. Conversation memory (`internal/workflow/memory.go`) + risk-gated confirmation flow (`internal/workflow/confirmation.go`). **Done-when:** confirmed ✅, audited ✅, multi-turn ✅ — end-to-end live verification still pending.
+- **M5 — Dashboard convergence.** ✅ Done, as a side effect of the consolidation — one WhatsApp stack, dashboard controls it directly.
+- **M6 — Accounting + Administration agents.** ✅ Go side built (Phase 5): 8 tools across the two agents, financial writes confirmation-gated at `high` risk. **Remaining:** the matching `mshalia`-side gateway tools (tracked in `mshalia`); PDF tools; manager-approval routing (beyond user self-confirmation).
+- **M7 — Hardening.** ✅ Built (Phases 4+6): trace ids, webhook error/panic reporting, retention job, CI, eval suite, [`DEPLOYMENT.md`](DEPLOYMENT.md) runbook. **Remaining:** metrics/dashboards; live smoke run.
+- **M8 — Go rewrite production-readiness debt.** ✅ Closed (Phase 0): admin credential from env/generated, CSRF, rate limiting, `.gitignore`, `go.sum` tracked.
+- **M9 — Live verification (next).** ⛔ The whole stack is now built-but-unverified-live: pair a real WhatsApp number, point at a deployed `mshalia` with real `AGENT_GATEWAY_SECRET`, real NIM/Groq keys, and run the eval scenarios as real conversations (voice + text). Also: implement the 8 accounting/administration tool ids in `mshalia`.
 
 ---
 
