@@ -104,6 +104,17 @@ type ConversationState struct {
 	UpdatedAt         time.Time `json:"updated_at"`
 }
 
+type PendingConfirmation struct {
+	ChatID        string    `json:"chat_id"`
+	ToolID        string    `json:"tool_id"`
+	Args          []byte    `json:"args"`
+	OrgID         string    `json:"org_id"`
+	ActingUserUid string    `json:"acting_user_uid"`
+	Description   string    `json:"description"`
+	CreatedAt     time.Time `json:"created_at"`
+	ExpiresAt     time.Time `json:"expires_at"`
+}
+
 type WaActivity struct {
 	ID          string    `json:"id"`
 	Ts          time.Time `json:"ts"`

@@ -27,6 +27,9 @@ type Querier interface {
 	ListConversationTurnsAfter(ctx context.Context, arg ListConversationTurnsAfterParams) ([]ConversationTurn, error)
 	GetConversationState(ctx context.Context, chatID string) (ConversationState, error)
 	UpsertConversationState(ctx context.Context, arg UpsertConversationStateParams) error
+	UpsertPendingConfirmation(ctx context.Context, arg UpsertPendingConfirmationParams) error
+	GetPendingConfirmation(ctx context.Context, chatID string) (PendingConfirmation, error)
+	DeletePendingConfirmation(ctx context.Context, chatID string) error
 }
 
 var _ Querier = (*Queries)(nil)

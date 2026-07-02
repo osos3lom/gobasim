@@ -222,6 +222,13 @@ func (e *WorkflowEngine) ClassifyIntent(ctx context.Context, state *State) error
 }
 
 func (e *WorkflowEngine) Execute(ctx context.Context, state *State) error {
+	// 0. A chat waiting on a yes/no consumes this message first.
+	if handled, err := e.resolvePendingConfirmation(ctx, state); err != nil {
+		log.Printf("[workflow] Pending-confirmation resolution failed: %v", err)
+	} else if handled {
+		return nil
+	}
+
 	// 1. Classify Intent
 	if err := e.ClassifyIntent(ctx, state); err != nil {
 		return err
@@ -392,11 +399,20 @@ func (e *WorkflowEngine) executeOperations(ctx context.Context, state *State) er
 		// Execute tool calls
 		for _, call := range aiMsg.ToolCalls {
 			log.Printf("[workflow] LLM requested tool call: '%s' with arguments: %s", call.Function.Name, call.Function.Arguments)
-			
+
 			// Parse arguments
 			var args map[string]interface{}
 			if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
 				args = make(map[string]interface{})
+			}
+
+			// Risky (medium/high) tools never execute directly: park the call
+			// and ask the user to confirm; the next message resolves it.
+			if riskOf(call.Function.Name) != "low" && e.queries != nil {
+				if err := e.requestConfirmation(ctx, state, call.Function.Name, args); err != nil {
+					return fmt.Errorf("failed to request confirmation: %w", err)
+				}
+				return nil
 			}
 
 			// Call ERP gateway tool

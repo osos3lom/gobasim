@@ -117,3 +117,19 @@ INSERT INTO conversation_state (chat_id, summary, summarized_through, updated_at
 VALUES ($1, $2, $3, NOW())
 ON CONFLICT (chat_id) DO UPDATE
 SET summary = EXCLUDED.summary, summarized_through = EXCLUDED.summarized_through, updated_at = NOW();
+
+-- name: UpsertPendingConfirmation :exec
+INSERT INTO pending_confirmations (chat_id, tool_id, args, org_id, acting_user_uid, description, created_at, expires_at)
+VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7)
+ON CONFLICT (chat_id) DO UPDATE
+SET tool_id = EXCLUDED.tool_id, args = EXCLUDED.args, org_id = EXCLUDED.org_id,
+    acting_user_uid = EXCLUDED.acting_user_uid, description = EXCLUDED.description,
+    created_at = NOW(), expires_at = EXCLUDED.expires_at;
+
+-- name: GetPendingConfirmation :one
+SELECT chat_id, tool_id, args, org_id, acting_user_uid, description, created_at, expires_at
+FROM pending_confirmations
+WHERE chat_id = $1;
+
+-- name: DeletePendingConfirmation :exec
+DELETE FROM pending_confirmations WHERE chat_id = $1;

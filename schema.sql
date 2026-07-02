@@ -122,6 +122,17 @@ CREATE TABLE IF NOT EXISTS conversation_state (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS pending_confirmations (
+    chat_id TEXT PRIMARY KEY,
+    tool_id TEXT NOT NULL,
+    args JSONB NOT NULL DEFAULT '{}'::jsonb,
+    org_id TEXT NOT NULL,
+    acting_user_uid TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_conversation_turns_chat_id ON conversation_turns (chat_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_tts_history_ts ON tts_history (ts DESC);
 CREATE INDEX IF NOT EXISTS idx_stt_history_ts ON stt_history (ts DESC);
