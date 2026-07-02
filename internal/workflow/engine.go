@@ -278,18 +278,14 @@ func (e *WorkflowEngine) Execute(ctx context.Context, state *State) error {
 		return err
 	}
 
-	// 2. Route based on classification
+	// 2. Route based on classification; each agent only sees its own tools.
 	switch state.Intent {
 	case "operations":
-		return e.executeOperations(ctx, state)
+		return e.executeToolLoop(ctx, state, operationsAgent)
 	case "accounting":
-		state.FinalReply = "عذراً، نظام المحاسبة غير مرتبط حالياً بهذا المساعد. يرجى مراجعة لوحة التحكم.\n" +
-			"Sorry, the accounting module is not connected to this assistant yet."
-		return nil
+		return e.executeToolLoop(ctx, state, accountingAgent)
 	case "administration":
-		state.FinalReply = "عذراً، نظام الإدارة والوثائق غير مرتبط حالياً. سنعمل على إضافته قريباً.\n" +
-			"Sorry, the administration module is not connected to this assistant yet."
-		return nil
+		return e.executeToolLoop(ctx, state, administrationAgent)
 	default: // other / small talk
 		return e.executeGeneralChat(ctx, state)
 	}
@@ -312,26 +308,14 @@ func (e *WorkflowEngine) executeGeneralChat(ctx context.Context, state *State) e
 	return nil
 }
 
-func (e *WorkflowEngine) executeOperations(ctx context.Context, state *State) error {
-	if state.ActorIdentity == nil || len(state.ActorIdentity.OrgIDs) == 0 {
-		state.FinalReply = "هذا الرقم غير مرتبط بحساب في النظام بعد. يرجى التواصل مع الإدارة لربط رقمك.\n" +
-			"This number isn't linked to an ERP account yet — please ask an admin to link it."
-		return nil
-	}
-	orgID := state.ActorIdentity.OrgIDs[0]
+// resolveSystemPrompt returns the effective persona prompt for a chat: the
+// contact's prompt override wins, then its assigned agent's prompt, then the
+// stored default agent, then the spec's built-in prompt.
+func (e *WorkflowEngine) resolveSystemPrompt(ctx context.Context, chatID, fallback string) string {
+	systemPrompt := fallback
 
-	// 1. Resolve System Instructions dynamically
-	systemPrompt := "You are the operations module of Sawt, an ERP assistant for an Arabian " +
-		"horse stable, talking to verified staff over WhatsApp. Use the available " +
-		"tools to answer questions about horses, care plans, and tasks, and to " +
-		"update task status when asked. Always resolve a horse or task by id via " +
-		"get_horse / list_tasks before acting on it — never invent an id. If a " +
-		"name search is ambiguous, ask the user to clarify instead of guessing. " +
-		"Once you have enough information, stop calling tools and answer directly in plain text, " +
-		"in the same language the user used, briefly — the reply may be spoken as a voice note. No markdown."
-
-	if e.queries != nil && state.ChatID != "" {
-		contact, err := e.queries.GetWaContact(ctx, state.ChatID)
+	if e.queries != nil && chatID != "" {
+		contact, err := e.queries.GetWaContact(ctx, chatID)
 		if err == nil {
 			if contact.PromptOverride != nil && *contact.PromptOverride != "" {
 				systemPrompt = *contact.PromptOverride
@@ -349,69 +333,22 @@ func (e *WorkflowEngine) executeOperations(ctx context.Context, state *State) er
 			}
 		}
 	}
+	return systemPrompt
+}
 
-	// Build the tools structure in OpenAI Tool schema format using typed structs
-	tools := []ToolDefinition{
-		{
-			Type: "function",
-			Function: FunctionDefinition{
-				Name:        "get_horse",
-				Description: "Look up a horse by exact id, or search by name (Arabic or English). Provide horseId OR nameQuery.",
-				Parameters: ParametersSchema{
-					Type: "object",
-					Properties: map[string]PropertySchema{
-						"horseId":   {Type: "string", Description: "The exact database ID of the horse."},
-						"nameQuery": {Type: "string", Description: "Name search string in English or Arabic."},
-					},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: FunctionDefinition{
-				Name:        "get_care_plan",
-				Description: "Get a horse's care plan (turnout minutes, feeding schedule, special instructions).",
-				Parameters: ParametersSchema{
-					Type: "object",
-					Properties: map[string]PropertySchema{
-						"horseId": {Type: "string", Description: "The exact database ID of the horse."},
-					},
-					Required: []string{"horseId"},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: FunctionDefinition{
-				Name:        "list_tasks",
-				Description: "List tasks, optionally filtered by status (pending/in-progress/completed/missed), assigneeId, or horseId.",
-				Parameters: ParametersSchema{
-					Type: "object",
-					Properties: map[string]PropertySchema{
-						"status":     {Type: "string", Description: "pending, in-progress, completed, missed"},
-						"assigneeId": {Type: "string", Description: "User ID of task assignee."},
-						"horseId":    {Type: "string", Description: "Filter tasks for a specific horse."},
-						"limit":      {Type: "integer", Description: "Max results to return (default 20)."},
-					},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: FunctionDefinition{
-				Name:        "update_task_status",
-				Description: "Update a task's status. status must be one of: pending, in-progress, completed, missed.",
-				Parameters: ParametersSchema{
-					Type: "object",
-					Properties: map[string]PropertySchema{
-						"taskId": {Type: "string", Description: "Exact task database ID."},
-						"status": {Type: "string", Description: "pending, in-progress, completed, missed"},
-					},
-					Required: []string{"taskId", "status"},
-				},
-			},
-		},
+// executeToolLoop runs the bounded tool-calling loop for one agent spec. Only
+// that agent's tools are exposed to the model; risky calls detour through the
+// confirmation flow.
+func (e *WorkflowEngine) executeToolLoop(ctx context.Context, state *State, spec agentSpec) error {
+	if state.ActorIdentity == nil || len(state.ActorIdentity.OrgIDs) == 0 {
+		state.FinalReply = "هذا الرقم غير مرتبط بحساب في النظام بعد. يرجى التواصل مع الإدارة لربط رقمك.\n" +
+			"This number isn't linked to an ERP account yet — please ask an admin to link it."
+		return nil
 	}
+	orgID := state.ActorIdentity.OrgIDs[0]
+
+	systemPrompt := e.resolveSystemPrompt(ctx, state.ChatID, spec.DefaultPrompt)
+	tools := spec.Tools
 
 	if state.Summary != "" {
 		systemPrompt += "\n\nSummary of the conversation so far:\n" + state.Summary
@@ -429,7 +366,7 @@ func (e *WorkflowEngine) executeOperations(ctx context.Context, state *State) er
 		trace.Logf(ctx, "[workflow] Running LLM iteration %d...", i+1)
 		aiMsg, err := e.complete(ctx, messages, tools, 0.0, 400)
 		if err != nil {
-			return fmt.Errorf("LLM operations execution call failed: %w", err)
+			return fmt.Errorf("LLM %s execution call failed: %w", spec.Name, err)
 		}
 
 		messages = append(messages, *aiMsg)

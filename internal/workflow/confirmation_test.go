@@ -217,3 +217,32 @@ func TestUnknownToolDefaultsToMediumRisk(t *testing.T) {
 		t.Fatal("get_horse must stay low risk")
 	}
 }
+
+func TestRecordExpenseRequiresConfirmation(t *testing.T) {
+	q := &confirmFakeQuerier{}
+	call := 0
+	e := newConfirmTestEngine(q, func(ctx context.Context, m []Message, tools []ToolDefinition, temp float32, maxTokens int) (*Message, error) {
+		call++
+		if call == 1 { // ClassifyIntent
+			return &Message{Role: "assistant", Content: "accounting"}, nil
+		}
+		return &Message{Role: "assistant", ToolCalls: []ToolCall{{
+			ID:       "tc1",
+			Type:     "function",
+			Function: ToolFunction{Name: "record_expense", Arguments: `{"amount":1200,"category":"feed"}`},
+		}}}, nil
+	})
+
+	state := linkedState("سجل فاتورة علف بـ 1200 ريال")
+	if err := e.Execute(context.Background(), state); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if q.pending == nil || q.pending.ToolID != "record_expense" {
+		t.Fatalf("expected pending record_expense confirmation, got %+v", q.pending)
+	}
+	// The restatement must include the amount so the user confirms the real number.
+	if !strings.Contains(state.FinalReply, "1200") {
+		t.Fatalf("expected the amount restated in the confirmation, got %q", state.FinalReply)
+	}
+}

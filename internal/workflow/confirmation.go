@@ -18,10 +18,21 @@ const confirmationTTL = 10 * time.Minute
 // user confirmation before execution. Unknown tools default to medium so a
 // newly added tool can never silently bypass confirmation.
 var toolRisk = map[string]string{
+	// operations
 	"get_horse":          "low",
 	"get_care_plan":      "low",
 	"list_tasks":         "low",
 	"update_task_status": "medium",
+	// accounting — financial writes are always high
+	"list_invoices":  "low",
+	"get_invoice":    "low",
+	"record_expense": "high",
+	"record_payment": "high",
+	// administration
+	"list_clients":   "low",
+	"get_client":     "low",
+	"list_contracts": "low",
+	"get_contract":   "low",
 }
 
 func riskOf(toolID string) string {
@@ -51,6 +62,10 @@ func describePendingAction(toolID string, args map[string]interface{}) string {
 	switch toolID {
 	case "update_task_status":
 		return fmt.Sprintf("تحديث حالة المهمة %v إلى \"%v\"", args["taskId"], args["status"])
+	case "record_expense":
+		return fmt.Sprintf("تسجيل مصروف بمبلغ %v ريال في فئة \"%v\"", args["amount"], args["category"])
+	case "record_payment":
+		return fmt.Sprintf("تسجيل دفعة بمبلغ %v ريال على الفاتورة %v", args["amount"], args["invoiceId"])
 	default:
 		argsJSON, _ := json.Marshal(args)
 		return fmt.Sprintf("تنفيذ العملية %s بالمعطيات %s", toolID, string(argsJSON))

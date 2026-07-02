@@ -149,17 +149,64 @@ func TestExecuteToolLoopStopsAtMaxIterations(t *testing.T) {
 	}
 }
 
-func TestExecuteAccountingAndAdministrationAreStubbed(t *testing.T) {
-	for _, intent := range []string{"accounting", "administration"} {
+func TestAgentRoutingExposesOnlyThatAgentsTools(t *testing.T) {
+	cases := []struct {
+		intent       string
+		wantTool     string
+		forbiddenTool string
+	}{
+		{"operations", "get_horse", "record_expense"},
+		{"accounting", "record_expense", "get_horse"},
+		{"administration", "list_clients", "update_task_status"},
+	}
+
+	for _, tc := range cases {
+		var seenTools []string
+		call := 0
 		e := newTestEngine(func(ctx context.Context, m []Message, tools []ToolDefinition, temp float32, maxTokens int) (*Message, error) {
-			return &Message{Role: "assistant", Content: intent}, nil
+			call++
+			if call == 1 { // ClassifyIntent
+				return &Message{Role: "assistant", Content: tc.intent}, nil
+			}
+			seenTools = nil
+			for _, td := range tools {
+				seenTools = append(seenTools, td.Function.Name)
+			}
+			return &Message{Role: "assistant", Content: "done"}, nil
 		})
+
 		state := linkedState("some request")
 		if err := e.Execute(context.Background(), state); err != nil {
-			t.Fatalf("unexpected error for %s: %v", intent, err)
+			t.Fatalf("unexpected error for %s: %v", tc.intent, err)
 		}
-		if state.FinalReply == "" {
-			t.Fatalf("expected a stub reply for %s intent", intent)
+
+		found, forbidden := false, false
+		for _, name := range seenTools {
+			if name == tc.wantTool {
+				found = true
+			}
+			if name == tc.forbiddenTool {
+				forbidden = true
+			}
+		}
+		if !found {
+			t.Errorf("%s agent should expose %s; saw %v", tc.intent, tc.wantTool, seenTools)
+		}
+		if forbidden {
+			t.Errorf("%s agent must NOT expose %s; saw %v", tc.intent, tc.forbiddenTool, seenTools)
+		}
+	}
+}
+
+func TestFinancialWritesAreHighRisk(t *testing.T) {
+	for _, tool := range []string{"record_expense", "record_payment"} {
+		if riskOf(tool) != "high" {
+			t.Errorf("%s must be high risk", tool)
+		}
+	}
+	for _, tool := range []string{"list_invoices", "get_invoice", "list_clients", "get_client", "list_contracts", "get_contract"} {
+		if riskOf(tool) != "low" {
+			t.Errorf("%s should be low risk (read-only)", tool)
 		}
 	}
 }
