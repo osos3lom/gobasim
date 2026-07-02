@@ -29,8 +29,8 @@ func (p *GoogleProvider) Transcribe(ctx context.Context, wavBytes []byte, langua
 		return "", fmt.Errorf("google api key is not set")
 	}
 
-	if language == "" {
-		language = "ar-SA" // Default to Arabic (Saudi Arabia)
+	if language == "" || language == "ar" {
+		language = "ar-SA" // Default/normalize to Arabic (Saudi Arabia)
 	}
 
 	url := fmt.Sprintf("https://speech.googleapis.com/v1/speech:recognize?key=%s", p.apiKey)
@@ -101,7 +101,7 @@ func (p *GoogleProvider) Synthesize(ctx context.Context, text string, language s
 		return nil, fmt.Errorf("google api key is not set")
 	}
 
-	if language == "" {
+	if language == "" || language == "ar" {
 		language = "ar-XA" // Standard Arabic
 	}
 

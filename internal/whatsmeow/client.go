@@ -2,10 +2,11 @@ package whatsmeow
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"sync"
-	"time"
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/store/sqlstore"
@@ -15,10 +16,11 @@ import (
 type ConnectionState string
 
 const (
-	StateDisconnected ConnectionState = "disconnected"
-	StateQRReady      ConnectionState = "qr_ready"
-	StatePairingReady ConnectionState = "pairing_ready"
-	StateConnected    ConnectionState = "connected"
+	StateDisconnected    ConnectionState = "disconnected"
+	StateAwaitingPairing ConnectionState = "awaiting_pairing"
+	StateQRReady         ConnectionState = "qr_ready"
+	StatePairingReady    ConnectionState = "pairing_ready"
+	StateConnected       ConnectionState = "connected"
 )
 
 type WhatsAppManager struct {
@@ -41,9 +43,11 @@ func (m *WhatsAppManager) GetStatus() (ConnectionState, string, string) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	// Double-check active client state
 	if m.Client != nil {
-		if m.Client.IsConnected() && m.Client.IsLoggedIn() {
+		if !m.Client.IsConnected() {
+			return StateDisconnected, "", ""
+		}
+		if m.Client.IsLoggedIn() {
 			return StateConnected, "", ""
 		}
 	}
@@ -59,14 +63,19 @@ func (m *WhatsAppManager) SetState(state ConnectionState, qr, pair string) {
 }
 
 func (m *WhatsAppManager) Initialize(ctx context.Context, eventHandler func(interface{})) error {
-	dbContainer, err := sqlstore.New("postgres", m.dbURL, nil)
+	dbLog := waLog.Stdout("Database", "WARN", true)
+	dbContainer, err := sqlstore.New(ctx, "postgres", m.dbURL, dbLog)
 	if err != nil {
 		return fmt.Errorf("sqlstore init failed: %w", err)
 	}
 
-	deviceStore, err := dbContainer.GetFirstDevice()
+	deviceStore, err := dbContainer.GetFirstDevice(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to get device store: %w", err)
+		if errors.Is(err, sql.ErrNoRows) {
+			deviceStore = dbContainer.NewDevice()
+		} else {
+			return fmt.Errorf("failed to get device store: %w", err)
+		}
 	}
 
 	clientLog := waLog.Stdout("WhatsApp", "WARN", true)
@@ -103,7 +112,7 @@ func (m *WhatsAppManager) Connect(ctx context.Context) error {
 		return err
 	}
 
-	m.SetState(StateDisconnected, "", "")
+	m.SetState(StateAwaitingPairing, "", "")
 	return nil
 }
 
@@ -121,7 +130,7 @@ func (m *WhatsAppManager) RequestPairingCode(phone string) (string, error) {
 	}
 
 	log.Printf("Requesting pairing code for phone number: %s...", phone)
-	code, err := client.PairPhone(phone, true, whatsmeow.PairClientChrome, "Sawt Dashboard")
+	code, err := client.PairPhone(context.Background(), phone, true, whatsmeow.PairClientChrome, "Sawt Dashboard")
 	if err != nil {
 		return "", fmt.Errorf("failed to request pairing code: %w", err)
 	}

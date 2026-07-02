@@ -1,13 +1,15 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/hex"
+	"log"
 	"os"
 	"strconv"
 )
 
 type Config struct {
 	DatabaseURL          string
-	GatewaySharedSecret  string
 	Port                 string
 	AgentGatewaySecret   string
 	MshaliaAPIURL        string
@@ -25,6 +27,9 @@ type Config struct {
 	SessionSecret        string
 	GroqAPIKey           string
 	GcpApiKey            string
+	SecureCookie         bool
+	AdminUsername        string
+	AdminPassword        string
 }
 
 func LoadConfig() *Config {
@@ -70,12 +75,19 @@ func LoadConfig() *Config {
 
 	sessionSecret := os.Getenv("SESSION_SECRET")
 	if sessionSecret == "" {
-		sessionSecret = "sawt-session-secret-change-me"
+		log.Println("WARNING: SESSION_SECRET env var is not set. Generating a random key for this run. Users will be logged out on server restart.")
+		bytes := make([]byte, 32)
+		if _, err := rand.Read(bytes); err != nil {
+			sessionSecret = "sawt-session-secret-change-me"
+		} else {
+			sessionSecret = hex.EncodeToString(bytes)
+		}
 	}
+
+	secureCookie, _ := strconv.ParseBool(os.Getenv("SECURE_COOKIE"))
 
 	return &Config{
 		DatabaseURL:         os.Getenv("DATABASE_URL"),
-		GatewaySharedSecret: os.Getenv("GATEWAY_SHARED_SECRET"),
 		Port:                port,
 		AgentGatewaySecret:  os.Getenv("AGENT_GATEWAY_SECRET"),
 		MshaliaAPIURL:       mshaliaURL,
@@ -93,6 +105,9 @@ func LoadConfig() *Config {
 		SessionSecret:       sessionSecret,
 		GroqAPIKey:          os.Getenv("GROQ_API_KEY"),
 		GcpApiKey:           os.Getenv("GCP_API_KEY"),
+		SecureCookie:        secureCookie,
+		AdminUsername:       os.Getenv("ADMIN_USERNAME"),
+		AdminPassword:       os.Getenv("ADMIN_PASSWORD"),
 	}
 }
 

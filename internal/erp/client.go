@@ -46,7 +46,7 @@ func (c *Client) getSignedHeaders(body string) (http.Header, error) {
 		return nil, fmt.Errorf("ERP secret is not configured")
 	}
 	
-	timestamp := strconv.FormatInt(time.Now().UnixNano()/int64(time.Millisecond), 10)
+	timestamp := strconv.FormatInt(time.Now().UnixMilli(), 10)
 	sig := computeSignature(c.secret, timestamp, body)
 	
 	headers := make(http.Header)

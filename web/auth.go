@@ -18,6 +18,10 @@ import (
 
 const SessionCookieName = "sawt_session"
 
+type contextKey string
+
+const UsernameContextKey contextKey = "username"
+
 type AuthManager struct {
 	cfg *config.Config
 	queries *database.Queries
@@ -46,14 +50,22 @@ func (a *AuthManager) GenerateCookieValue(username string, duration time.Duratio
 
 // VerifyCookieValue parses and verifies a signed session cookie. Returns username if valid.
 func (a *AuthManager) VerifyCookieValue(cookieValue string) (string, error) {
-	parts := strings.Split(cookieValue, ":")
-	if len(parts) != 3 {
+	// The format is username:expiration:signature.
+	// Since expiration is digits-only and signature is hex-only, neither contains ':'.
+	// We extract signature and expiration from the right of the string to support usernames containing ':'.
+	lastColon := strings.LastIndex(cookieValue, ":")
+	if lastColon == -1 {
 		return "", fmt.Errorf("invalid cookie format")
 	}
+	signature := cookieValue[lastColon+1:]
+	remaining := cookieValue[:lastColon]
 
-	username := parts[0]
-	expStr := parts[1]
-	signature := parts[2]
+	secondLastColon := strings.LastIndex(remaining, ":")
+	if secondLastColon == -1 {
+		return "", fmt.Errorf("invalid cookie format")
+	}
+	expStr := remaining[secondLastColon+1:]
+	username := remaining[:secondLastColon]
 
 	value := fmt.Sprintf("%s:%s", username, expStr)
 	expectedSig := a.computeHash(value)
@@ -97,8 +109,8 @@ func (a *AuthManager) RequireAuth(next http.Handler) http.Handler {
 			return
 		}
 
-		// Inject username into request context
-		ctx := context.WithValue(r.Context(), "username", username)
+		// Inject username into request context using custom type context key
+		ctx := context.WithValue(r.Context(), UsernameContextKey, username)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -123,7 +135,7 @@ func (a *AuthManager) Login(ctx context.Context, username, password string) (*ht
 		Path:     "/",
 		MaxAge:   86400,
 		HttpOnly: true,
-		Secure:   false, // Set to true in production with HTTPS
+		Secure:   a.cfg.SecureCookie,
 		SameSite: http.SameSiteLaxMode,
 	}, nil
 }

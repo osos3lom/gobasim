@@ -216,6 +216,7 @@
     <div class="space-y-4">
         <p class="text-sm text-gray-300">Link WhatsApp by requesting an 8-character pairing code directly to your phone:</p>
         <form hx-post="/dashboard/whatsapp/pair-code" hx-target="#whatsapp-pairing-card" hx-swap="outerHTML" class="flex gap-2">
+            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
             <input type="text" name="phone" placeholder="9665xxxxxxxx (country code first)" required
                    class="flex-1 bg-slate-950/60 border border-indigo-950 focus:border-indigo-500 rounded-xl px-4 py-2.5 text-sm text-white outline-none transition duration-200">
             <button type="submit" class="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl transition duration-200 active:scale-95">

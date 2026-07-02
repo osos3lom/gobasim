@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
-	"encoding/base64"
+	"crypto/rand"
+	_ "embed"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -13,6 +15,7 @@ import (
 	"sawt-go/database"
 	"sawt-go/internal/audio"
 	"sawt-go/internal/erp"
+	"sawt-go/internal/ratelimit"
 	"sawt-go/internal/speech"
 	waClient "sawt-go/internal/whatsmeow"
 	"sawt-go/internal/workflow"
@@ -21,16 +24,22 @@ import (
 	"syscall"
 	"time"
 
-	_ "github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/mdp/qrterminal/v3"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/binary/proto"
-	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
-	waLog "go.mau.fi/whatsmeow/util/log"
+	"golang.org/x/crypto/bcrypt"
 	googleProto "google.golang.org/protobuf/proto"
 )
+
+// inboundLimiter throttles how many messages a single WhatsApp chat can push
+// through the STT/LLM/ERP pipeline: 8 messages per rolling minute per chat.
+var inboundLimiter = ratelimit.New(8, time.Minute)
+
+//go:embed schema.sql
+var schemaSQL string
 
 func main() {
 	log.Println("Starting Sawt Unified Daemon...")
@@ -47,13 +56,46 @@ func main() {
 	}
 	defer pool.Close()
 
+	// Bootstrap database schema if tables/indexes do not exist
+	log.Println("Database: Checking/bootstrapping schema...")
+	_, err = pool.Exec(ctx, schemaSQL)
+	if err != nil {
+		log.Fatalf("Fatal: Database schema bootstrap failed: %v", err)
+	}
+	log.Println("Database: Schema bootstrap complete.")
+
 	queries := database.New(pool)
+
+	// Seed an admin user on first boot only (empty users table). Credentials
+	// come from ADMIN_USERNAME/ADMIN_PASSWORD; if no password is provided a
+	// random one is generated and printed exactly once.
+	if err := seedAdminUser(ctx, pool, queries, cfg); err != nil {
+		log.Printf("Database: Warning: admin user seeding failed: %v", err)
+	}
+
+	// Ensure default agent exists in database
+	var agentExists bool
+	err = pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM agents WHERE id = 'default')").Scan(&agentExists)
+	if err == nil && !agentExists {
+		_, err = pool.Exec(ctx, `
+			INSERT INTO agents (id, name, status, system_prompt, greeting_message, failure_message)
+			VALUES ('default', 'Sawt Operations Agent', 'published', 
+			'You are the operations module of Sawt, an ERP assistant for an Arabian horse stable, talking to verified staff over WhatsApp. Use the available tools to answer questions about horses, care plans, and tasks, and to update task status when asked. Always resolve a horse or task by id via get_horse / list_tasks before acting on it — never invent an id. If a name search is ambiguous, ask the user to clarify instead of guessing. Once you have enough information, stop calling tools and answer directly in plain text, in the same language the user used, briefly — the reply may be spoken as a voice note. No markdown.',
+			'مرحباً بك في نظام صوت للخيول العربية. كيف يمكنني مساعدتك اليوم؟',
+			'عذراً، حدث خطأ أثناء معالجة طلبك. يرجى المحاولة مرة أخرى.')
+		`)
+		if err != nil {
+			log.Printf("Database: Warning: Failed to seed default agent: %v", err)
+		} else {
+			log.Println("Database: Default operations agent seeded successfully.")
+		}
+	}
 
 	// 2. Initialize Speech & Workflow Orchestrators
 	sttOrch := speech.NewSTTOrchestrator(cfg)
 	ttsOrch := speech.NewTTSOrchestrator(cfg)
 	erpClient := erp.NewClient(cfg.MshaliaAPIURL, cfg.AgentGatewaySecret)
-	wfEngine := workflow.NewWorkflowEngine(cfg, erpClient)
+	wfEngine := workflow.NewWorkflowEngine(cfg, erpClient, queries)
 
 	// 3. Initialize WhatsApp Connection Manager
 	waMgr := waClient.NewWhatsAppManager(cfg.DatabaseURL)
@@ -83,7 +125,7 @@ func main() {
 	// Start background QR Code generator if client is not logged in
 	if waMgr.Client.Store.ID == nil {
 		go func() {
-			qrChan, err := waMgr.Client.GetQRChannel(context.Background())
+			qrChan, err := waMgr.Client.GetQRChannel(ctx)
 			if err != nil {
 				log.Printf("Failed to get QR channel: %v", err)
 				return
@@ -95,7 +137,7 @@ func main() {
 					
 					// Print to console terminal
 					log.Println("New WhatsApp pairing QR Code generated. Displaying in console:")
-					qrterminal.GenerateHalfBlock(qr.Code, qrterminal.ConsoleColors{}, os.Stdout)
+					qrterminal.GenerateHalfBlock(qr.Code, qrterminal.L, os.Stdout)
 				} else {
 					log.Printf("QR Channel Event: %s", qr.Event)
 				}
@@ -106,13 +148,17 @@ func main() {
 	// Trigger pairing code if phone configuration is set at VM startup
 	if waMgr.Client.Store.ID == nil && cfg.PairPhoneNumber != "" {
 		go func() {
-			time.Sleep(3 * time.Second) // wait for connection to stabilize
-			phoneNum := strings.ReplaceAll(cfg.PairPhoneNumber, "+", "")
-			code, err := waMgr.RequestPairingCode(phoneNum)
-			if err != nil {
-				log.Printf("Failed to generate VM startup pairing code: %v", err)
-			} else {
-				log.Printf("\n============================================\n  STARTUP PHONE PAIRING CODE: %s\n============================================\n", code)
+			select {
+			case <-time.After(3 * time.Second): // wait for connection to stabilize
+				phoneNum := strings.ReplaceAll(cfg.PairPhoneNumber, "+", "")
+				code, err := waMgr.RequestPairingCode(phoneNum)
+				if err != nil {
+					log.Printf("Failed to generate VM startup pairing code: %v", err)
+				} else {
+					log.Printf("\n============================================\n  STARTUP PHONE PAIRING CODE: %s\n============================================\n", code)
+				}
+			case <-ctx.Done():
+				return
 			}
 		}()
 	}
@@ -123,14 +169,12 @@ func main() {
 
 	go func() {
 		log.Printf("Web Dashboard serving at http://localhost:%s\n", cfg.Port)
-		if err := http.ResponseWriter(nil); true { // compile placeholder check
-			server := &http.Server{
-				Addr:    ":" + cfg.Port,
-				Handler: router,
-			}
-			if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				log.Printf("Web server error: %v", err)
-			}
+		server := &http.Server{
+			Addr:    ":" + cfg.Port,
+			Handler: router,
+		}
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("Web server error: %v", err)
 		}
 	}()
 
@@ -142,6 +186,52 @@ func main() {
 	log.Println("Shutting down daemon gracefully...")
 	waMgr.Client.Disconnect()
 	log.Println("Shutdown complete.")
+}
+
+func seedAdminUser(ctx context.Context, pool *pgxpool.Pool, queries *database.Queries, cfg *config.Config) error {
+	var userCount int64
+	if err := pool.QueryRow(ctx, "SELECT COUNT(*) FROM users").Scan(&userCount); err != nil {
+		return fmt.Errorf("failed to count users: %w", err)
+	}
+	if userCount > 0 {
+		return nil
+	}
+
+	username := cfg.AdminUsername
+	if username == "" {
+		username = "admin"
+	}
+
+	password := cfg.AdminPassword
+	generated := false
+	if password == "" {
+		buf := make([]byte, 12)
+		if _, err := rand.Read(buf); err != nil {
+			return fmt.Errorf("failed to generate random password: %w", err)
+		}
+		password = hex.EncodeToString(buf)
+		generated = true
+	}
+
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("failed to hash admin password: %w", err)
+	}
+
+	if _, err := queries.CreateUser(ctx, database.CreateUserParams{
+		Username:     username,
+		PasswordHash: string(hashedPassword),
+	}); err != nil {
+		return fmt.Errorf("failed to create admin user: %w", err)
+	}
+
+	if generated {
+		log.Printf("Database: Seeded admin user %q with a generated one-time password: %s", username, password)
+		log.Println("Database: ^^ This password will NOT be shown again. Log in and change it, or set ADMIN_USERNAME/ADMIN_PASSWORD.")
+	} else {
+		log.Printf("Database: Seeded admin user %q from ADMIN_USERNAME/ADMIN_PASSWORD.", username)
+	}
+	return nil
 }
 
 func handleIncomingMessage(
@@ -160,12 +250,52 @@ func handleIncomingMessage(
 	if evt.Info.Chat.String() == "status@broadcast" {
 		return
 	}
+	if evt.Info.IsGroup {
+		log.Printf("Inbound: Skipping group message %s from %s", evt.Info.ID, evt.Info.Chat.String())
+		return
+	}
 
 	log.Printf("Inbound: Received message %s from %s", evt.Info.ID, evt.Info.Chat.String())
 
+	// Throttle per chat so one number can't hammer the LLM/ERP pipeline.
+	if allowed, count := inboundLimiter.Allow(evt.Info.Chat.String()); !allowed {
+		// Warn only on the first message over the limit; drop the rest silently.
+		if count == 9 {
+			sendTextReply(client, evt.Info.Chat, "أرسلت رسائل كثيرة خلال وقت قصير. يرجى الانتظار قليلاً ثم المحاولة مرة أخرى.")
+		}
+		log.Printf("Inbound: Rate limit exceeded for %s (%d msgs/min), dropping message", evt.Info.Chat.String(), count)
+		return
+	}
+
+	// Look up contact in wa_contacts to verify if they are enabled
+	contact, err := queries.GetWaContact(ctx, evt.Info.Chat.String())
+	if err != nil {
+		// Contact does not exist yet. Auto-create them as enabled:
+		phone := strings.Split(evt.Info.Chat.String(), "@")[0]
+		name := evt.Info.PushName
+		if name == "" {
+			name = phone
+		}
+		contact, err = queries.CreateOrUpdateWaContact(ctx, database.CreateOrUpdateWaContactParams{
+			ChatID:         evt.Info.Chat.String(),
+			Name:           name,
+			Enabled:        true, // Default to true
+			AgentID:        nil,
+			PromptOverride: nil,
+		})
+		if err != nil {
+			log.Printf("Inbound: Warning: Failed to auto-create contact %s: %v", evt.Info.Chat.String(), err)
+		} else {
+			log.Printf("Inbound: Auto-created new contact in database: %s (%s)", contact.Name, contact.ChatID)
+		}
+	} else if !contact.Enabled {
+		// Drop message processing if contact is explicitly disabled
+		log.Printf("Inbound: Discarding message from disabled contact %s (%s)", contact.Name, contact.ChatID)
+		return
+	}
+
 	var text string
 	var incomingAudio []byte
-	var err error
 
 	// Extract text content
 	if evt.Message.Conversation != nil {
@@ -185,7 +315,7 @@ func handleIncomingMessage(
 	// 1. Handle STT if audio message
 	if isAudio {
 		log.Println("Inbound: Message contains audio. Downloading...")
-		incomingAudio, err = client.Download(evt.Message.AudioMessage)
+		incomingAudio, err = client.Download(ctx, evt.Message.AudioMessage)
 		if err != nil {
 			log.Printf("Inbound: Failed to download audio: %v", err)
 			sendTextReply(client, evt.Info.Chat, "عذراً، لم أتمكن من تحميل الرسالة الصوتية.")
@@ -231,12 +361,10 @@ func handleIncomingMessage(
 
 	// 2. Resolve Actor Identity from Phone JID
 	var identity *erp.Identity
-	if !evt.Info.IsGroup {
-		phone := strings.Split(evt.Info.Chat.String(), "@")[0]
-		identity, err = erpClient.ResolveIdentity(ctx, phone)
-		if err != nil {
-			log.Printf("Inbound: Identity resolution failed: %v", err)
-		}
+	phone := strings.Split(evt.Info.Chat.String(), "@")[0]
+	identity, err = erpClient.ResolveIdentity(ctx, phone)
+	if err != nil {
+		log.Printf("Inbound: Identity resolution failed: %v", err)
 	}
 
 	// 3. Invoke State Workflow
@@ -246,9 +374,10 @@ func handleIncomingMessage(
 		Content: text,
 	})
 
-	state := &State{
+	state := &workflow.State{
 		Messages:      messagesHistory,
 		ActorIdentity: identity,
+		ChatID:        evt.Info.Chat.String(),
 	}
 
 	llmStart := time.Now()
@@ -314,14 +443,14 @@ func handleIncomingMessage(
 		} else {
 			audioMsg := &proto.Message{
 				AudioMessage: &proto.AudioMessage{
-					Url:           googleProto.String(resp.URL),
+					URL:           googleProto.String(resp.URL),
 					DirectPath:    googleProto.String(resp.DirectPath),
 					MediaKey:      resp.MediaKey,
 					Mimetype:      googleProto.String("audio/ogg; codecs=opus"),
-					Ptt:           googleProto.Bool(true),
+					PTT:           googleProto.Bool(true),
 					FileLength:    googleProto.Uint64(uint64(len(replyAudio))),
-					FileSha256:    resp.FileSHA256,
-					FileEncSha256: resp.FileEncSHA256,
+					FileSHA256:    resp.FileSHA256,
+					FileEncSHA256: resp.FileEncSHA256,
 				},
 			}
 			_, err = client.SendMessage(context.Background(), evt.Info.Chat, audioMsg)
@@ -338,14 +467,17 @@ func handleIncomingMessage(
 
 	// 6. Log Activity Log to Neon DB
 	toolCallsBytes, _ := json.Marshal(state.ToolResults)
-	var agentID *string
-	if identity != nil {
-		agentID = &identity.Role
+	
+	// Fetch the assigned agent for this contact from database
+	var assignedAgentID *string
+	contact, err = queries.GetWaContact(ctx, evt.Info.Chat.String())
+	if err == nil && contact.AgentID != nil {
+		assignedAgentID = contact.AgentID
 	}
-	var sttProvPtr *string
-	if sttProvider != "" {
-		sttProvPtr = &sttProvider
-	}
+
+	cfg := config.LoadConfig()
+	llmModelPtr := &cfg.NimModel
+
 	var ttsProvPtr *string
 	if ttsProvider != "" {
 		ttsProvPtr = &ttsProvider
@@ -360,8 +492,8 @@ func handleIncomingMessage(
 		Transcript:  text,
 		Reply:       replyText,
 		Language:    "ar",
-		AgentID:     agentID,
-		LlmModel:    sttProvPtr, // mapping for provider logs
+		AgentID:     assignedAgentID,
+		LlmModel:    llmModelPtr,
 		TtsModel:    ttsProvPtr,
 		ToolCalls:   toolCallsBytes,
 		SttMs:       sttMs,

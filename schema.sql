@@ -106,3 +106,8 @@ CREATE TABLE IF NOT EXISTS wa_activity (
     status TEXT NOT NULL DEFAULT 'ok',
     error TEXT
 );
+
+CREATE INDEX IF NOT EXISTS idx_tts_history_ts ON tts_history (ts DESC);
+CREATE INDEX IF NOT EXISTS idx_stt_history_ts ON stt_history (ts DESC);
+CREATE INDEX IF NOT EXISTS idx_wa_contacts_updated ON wa_contacts (updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_wa_activity_ts ON wa_activity (ts DESC);

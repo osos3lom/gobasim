@@ -9,7 +9,9 @@ import (
 	"log"
 	"net/http"
 	"sawt-go/config"
+	"sawt-go/database"
 	"sawt-go/internal/erp"
+	"strings"
 	"time"
 )
 
@@ -38,36 +40,73 @@ type State struct {
 	ActorIdentity *erp.Identity
 	ToolResults   []map[string]interface{}
 	FinalReply    string
+	ChatID        string
+}
+
+// NIM / OpenAI Chat Completion API Request & Tool schema structs
+type ChatCompletionRequest struct {
+	Model       string           `json:"model"`
+	Messages    []Message        `json:"messages"`
+	Temperature float32          `json:"temperature"`
+	MaxTokens   int              `json:"max_tokens"`
+	Tools       []ToolDefinition `json:"tools,omitempty"`
+}
+
+type ToolDefinition struct {
+	Type     string             `json:"type"`
+	Function FunctionDefinition `json:"function"`
+}
+
+type FunctionDefinition struct {
+	Name        string           `json:"name"`
+	Description string           `json:"description"`
+	Parameters  ParametersSchema `json:"parameters"`
+}
+
+type ParametersSchema struct {
+	Type       string                    `json:"type"`
+	Properties map[string]PropertySchema `json:"properties"`
+	Required   []string                  `json:"required,omitempty"`
+}
+
+type PropertySchema struct {
+	Type        string   `json:"type"`
+	Description string   `json:"description"`
+	Enum        []string `json:"enum,omitempty"`
 }
 
 type WorkflowEngine struct {
-	cfg       *config.Config
-	erpClient *erp.Client
+	cfg        *config.Config
+	erpClient  *erp.Client
+	httpClient *http.Client
+	queries    *database.Queries
 }
 
-func NewWorkflowEngine(cfg *config.Config, erpClient *erp.Client) *WorkflowEngine {
+func NewWorkflowEngine(cfg *config.Config, erpClient *erp.Client, queries *database.Queries) *WorkflowEngine {
 	return &WorkflowEngine{
-		cfg:       cfg,
-		erpClient: erpClient,
+		cfg:        cfg,
+		erpClient:  erpClient,
+		queries:    queries,
+		httpClient: &http.Client{
+			Timeout: 30 * time.Second,
+		},
 	}
 }
 
 // chatCompletions makes a standard HTTP request to the configured OpenAI-compatible LLM endpoint (NVIDIA NIM).
-func (e *WorkflowEngine) chatCompletions(ctx context.Context, messages []Message, tools []interface{}, temp float32, maxTokens int) (*Message, error) {
+func (e *WorkflowEngine) chatCompletions(ctx context.Context, messages []Message, tools []ToolDefinition, temp float32, maxTokens int) (*Message, error) {
 	if e.cfg.NimAPIKey == "" {
 		return nil, fmt.Errorf("NIM_API_KEY is not configured")
 	}
 
 	url := fmt.Sprintf("%s/chat/completions", e.cfg.NimBaseURL)
 
-	payload := map[string]interface{}{
-		"model":       e.cfg.NimModel,
-		"messages":    messages,
-		"temperature": temp,
-		"max_tokens":  maxTokens,
-	}
-	if len(tools) > 0 {
-		payload["tools"] = tools
+	payload := ChatCompletionRequest{
+		Model:       e.cfg.NimModel,
+		Messages:    messages,
+		Temperature: temp,
+		MaxTokens:   maxTokens,
+		Tools:       tools,
 	}
 
 	jsonBytes, err := json.Marshal(payload)
@@ -83,9 +122,7 @@ func (e *WorkflowEngine) chatCompletions(ctx context.Context, messages []Message
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+e.cfg.NimAPIKey)
 
-	timeout := 30 * time.Second
-	client := &http.Client{Timeout: timeout}
-	resp, err := client.Do(req)
+	resp, err := e.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("http request failed: %w", err)
 	}
@@ -157,10 +194,10 @@ func (e *WorkflowEngine) ClassifyIntent(ctx context.Context, state *State) error
 		return nil
 	}
 
-	// Clean classification
+	// Clean classification using standard library strings package
 	intent := msg.Content
-	intent = stringsTrim(intent, " \n\r\t.,!\"'")
-	intent = stringsToLower(intent)
+	intent = strings.Trim(intent, " \n\r\t.,!\"'")
+	intent = strings.ToLower(intent)
 
 	// Validate intent
 	switch intent {
@@ -219,6 +256,7 @@ func (e *WorkflowEngine) executeOperations(ctx context.Context, state *State) er
 	}
 	orgID := state.ActorIdentity.OrgIDs[0]
 
+	// 1. Resolve System Instructions dynamically
 	systemPrompt := "You are the operations module of Sawt, an ERP assistant for an Arabian " +
 		"horse stable, talking to verified staff over WhatsApp. Use the available " +
 		"tools to answer questions about horses, care plans, and tasks, and to " +
@@ -228,64 +266,84 @@ func (e *WorkflowEngine) executeOperations(ctx context.Context, state *State) er
 		"Once you have enough information, stop calling tools and answer directly in plain text, " +
 		"in the same language the user used, briefly — the reply may be spoken as a voice note. No markdown."
 
-	// Build the tools structure in OpenAI Tool schema format
-	tools := []interface{}{
-		map[string]interface{}{
-			"type": "function",
-			"function": map[string]interface{}{
-				"name":        "get_horse",
-				"description": "Look up a horse by exact id, or search by name (Arabic or English). Provide horseId OR nameQuery.",
-				"parameters": map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"horseId":   map[string]string{"type": "string", "description": "The exact database ID of the horse."},
-						"nameQuery": map[string]string{"type": "string", "description": "Name search string in English or Arabic."},
+	if e.queries != nil && state.ChatID != "" {
+		contact, err := e.queries.GetWaContact(ctx, state.ChatID)
+		if err == nil {
+			if contact.PromptOverride != nil && *contact.PromptOverride != "" {
+				systemPrompt = *contact.PromptOverride
+			} else if contact.AgentID != nil && *contact.AgentID != "" {
+				agent, err := e.queries.GetAgent(ctx, *contact.AgentID)
+				if err == nil && agent.SystemPrompt != "" {
+					systemPrompt = agent.SystemPrompt
+				}
+			} else {
+				// Fall back to the default agent prompt if set
+				agent, err := e.queries.GetAgent(ctx, "default")
+				if err == nil && agent.SystemPrompt != "" {
+					systemPrompt = agent.SystemPrompt
+				}
+			}
+		}
+	}
+
+	// Build the tools structure in OpenAI Tool schema format using typed structs
+	tools := []ToolDefinition{
+		{
+			Type: "function",
+			Function: FunctionDefinition{
+				Name:        "get_horse",
+				Description: "Look up a horse by exact id, or search by name (Arabic or English). Provide horseId OR nameQuery.",
+				Parameters: ParametersSchema{
+					Type: "object",
+					Properties: map[string]PropertySchema{
+						"horseId":   {Type: "string", Description: "The exact database ID of the horse."},
+						"nameQuery": {Type: "string", Description: "Name search string in English or Arabic."},
 					},
 				},
 			},
 		},
-		map[string]interface{}{
-			"type": "function",
-			"function": map[string]interface{}{
-				"name":        "get_care_plan",
-				"description": "Get a horse's care plan (turnout minutes, feeding schedule, special instructions).",
-				"parameters": map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"horseId": map[string]string{"type": "string", "description": "The exact database ID of the horse."},
+		{
+			Type: "function",
+			Function: FunctionDefinition{
+				Name:        "get_care_plan",
+				Description: "Get a horse's care plan (turnout minutes, feeding schedule, special instructions).",
+				Parameters: ParametersSchema{
+					Type: "object",
+					Properties: map[string]PropertySchema{
+						"horseId": {Type: "string", Description: "The exact database ID of the horse."},
 					},
-					"required": []string{"horseId"},
+					Required: []string{"horseId"},
 				},
 			},
 		},
-		map[string]interface{}{
-			"type": "function",
-			"function": map[string]interface{}{
-				"name":        "list_tasks",
-				"description": "List tasks, optionally filtered by status (pending/in-progress/completed/missed), assigneeId, or horseId.",
-				"parameters": map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"status":     map[string]string{"type": "string", "description": "pending, in-progress, completed, missed"},
-						"assigneeId": map[string]string{"type": "string", "description": "User ID of task assignee."},
-						"horseId":    map[string]string{"type": "string", "description": "Filter tasks for a specific horse."},
-						"limit":      map[string]string{"type": "integer", "description": "Max results to return (default 20)."},
+		{
+			Type: "function",
+			Function: FunctionDefinition{
+				Name:        "list_tasks",
+				Description: "List tasks, optionally filtered by status (pending/in-progress/completed/missed), assigneeId, or horseId.",
+				Parameters: ParametersSchema{
+					Type: "object",
+					Properties: map[string]PropertySchema{
+						"status":     {Type: "string", Description: "pending, in-progress, completed, missed"},
+						"assigneeId": {Type: "string", Description: "User ID of task assignee."},
+						"horseId":    {Type: "string", Description: "Filter tasks for a specific horse."},
+						"limit":      {Type: "integer", Description: "Max results to return (default 20)."},
 					},
 				},
 			},
 		},
-		map[string]interface{}{
-			"type": "function",
-			"function": map[string]interface{}{
-				"name":        "update_task_status",
-				"description": "Update a task's status. status must be one of: pending, in-progress, completed, missed.",
-				"parameters": map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"taskId": map[string]string{"type": "string", "description": "Exact task database ID."},
-						"status": map[string]string{"type": "string", "description": "pending, in-progress, completed, missed"},
+		{
+			Type: "function",
+			Function: FunctionDefinition{
+				Name:        "update_task_status",
+				Description: "Update a task's status. status must be one of: pending, in-progress, completed, missed.",
+				Parameters: ParametersSchema{
+					Type: "object",
+					Properties: map[string]PropertySchema{
+						"taskId": {Type: "string", Description: "Exact task database ID."},
+						"status": {Type: "string", Description: "pending, in-progress, completed, missed"},
 					},
-					"required": []string{"taskId", "status"},
+					Required: []string{"taskId", "status"},
 				},
 			},
 		},
@@ -351,37 +409,4 @@ func (e *WorkflowEngine) executeOperations(ctx context.Context, state *State) er
 
 	state.FinalReply = "لم أتمكن من إكمال طلبك، تكرر استدعاء المهام بأسلوب غير صحيح."
 	return nil
-}
-
-// Simple strings helpers to avoid dependency packages
-
-func stringsTrim(s, cutset string) string {
-	start := 0
-	for start < len(s) && stringsContainsChar(cutset, s[start]) {
-		start++
-	}
-	end := len(s)
-	for end > start && stringsContainsChar(cutset, s[end-1]) {
-		end--
-	}
-	return s[start:end]
-}
-
-func stringsToLower(s string) string {
-	b := []byte(s)
-	for i := range b {
-		if b[i] >= 'A' && b[i] <= 'Z' {
-			b[i] += 32
-		}
-	}
-	return string(b)
-}
-
-func stringsContainsChar(cutset string, c byte) bool {
-	for i := range cutset {
-		if cutset[i] == c {
-			return true
-		}
-	}
-	return false
 }

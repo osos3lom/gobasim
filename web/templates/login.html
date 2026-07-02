@@ -48,6 +48,7 @@
 
         <!-- Form -->
         <form action="/login" method="POST" class="space-y-6">
+            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
             <div>
                 <label for="username" class="block text-sm font-medium text-gray-300">Username</label>
                 <input type="text" id="username" name="username" required 

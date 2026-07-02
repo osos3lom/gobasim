@@ -1,0 +1,14 @@
+# Compiled binaries
+*.exe
+sawt-gateway
+
+# Local environment / secrets
+.env
+.env.*
+
+# Local STT models
+models/
+
+# Editor/OS noise
+.DS_Store
+Thumbs.db

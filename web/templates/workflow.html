@@ -25,6 +25,7 @@
         <!-- Update Form using HTMX -->
         <form hx-post="/dashboard/workflows/update" hx-target="#feedback" hx-swap="innerHTML" class="space-y-6">
             <!-- Hidden ID -->
+            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
             <input type="hidden" name="id" value="{{.ID}}">
             <input type="hidden" name="name" value="{{.Name}}">
 
