@@ -11,6 +11,7 @@ import (
 	"os"
 	"sawt-go/config"
 	"sawt-go/database"
+	"sawt-go/internal/monitor"
 	"sawt-go/internal/ratelimit"
 	waClient "sawt-go/internal/whatsmeow"
 	"strings"
@@ -72,6 +73,7 @@ func (s *Server) GetRouter() chi.Router {
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Logger)
+	r.Use(reportPanics)
 	r.Use(middleware.Recoverer)
 
 	// Auth page routes
@@ -310,6 +312,20 @@ func (s *Server) handleSSELogs(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+// reportPanics forwards HTTP handler panics to the error monitor, then
+// re-panics so chi's Recoverer still produces the 500 response.
+func reportPanics(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rec := recover(); rec != nil && rec != http.ErrAbortHandler {
+				monitor.ReportPanic("web:"+r.URL.Path, rec)
+				panic(rec)
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
 }
 
 // LogBroker implements a simple thread-safe broker to stream logs.

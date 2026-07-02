@@ -3,8 +3,8 @@ package workflow
 import (
 	"context"
 	"fmt"
-	"log"
 	"sawt-go/database"
+	"sawt-go/internal/trace"
 	"strings"
 	"time"
 )
@@ -66,14 +66,14 @@ func (e *WorkflowEngine) SaveTurns(ctx context.Context, chatID, userText, assist
 		if _, err := e.queries.CreateConversationTurn(ctx, database.CreateConversationTurnParams{
 			ChatID: chatID, Role: "user", Content: userText,
 		}); err != nil {
-			log.Printf("[memory] failed to persist user turn for %s: %v", chatID, err)
+			trace.Logf(ctx, "[memory] failed to persist user turn for %s: %v", chatID, err)
 		}
 	}
 	if assistantText != "" {
 		if _, err := e.queries.CreateConversationTurn(ctx, database.CreateConversationTurnParams{
 			ChatID: chatID, Role: "assistant", Content: assistantText,
 		}); err != nil {
-			log.Printf("[memory] failed to persist assistant turn for %s: %v", chatID, err)
+			trace.Logf(ctx, "[memory] failed to persist assistant turn for %s: %v", chatID, err)
 		}
 	}
 
@@ -82,7 +82,7 @@ func (e *WorkflowEngine) SaveTurns(ctx context.Context, chatID, userText, assist
 		bgCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 		if err := e.summarizeIfNeeded(bgCtx, chatID); err != nil {
-			log.Printf("[memory] rolling summary failed for %s: %v", chatID, err)
+			trace.Logf(ctx, "[memory] rolling summary failed for %s: %v", chatID, err)
 		}
 	}()
 }
@@ -141,6 +141,6 @@ func (e *WorkflowEngine) summarizeIfNeeded(ctx context.Context, chatID string) e
 		return fmt.Errorf("failed to store summary: %w", err)
 	}
 
-	log.Printf("[memory] folded %d turns into the rolling summary for %s", len(toFold), chatID)
+	trace.Logf(ctx, "[memory] folded %d turns into the rolling summary for %s", len(toFold), chatID)
 	return nil
 }

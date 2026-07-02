@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"sawt-go/database"
+	"sawt-go/internal/trace"
 	"strings"
 	"time"
 )
@@ -87,7 +87,7 @@ func (e *WorkflowEngine) requestConfirmation(ctx context.Context, state *State, 
 	})
 
 	state.FinalReply = fmt.Sprintf("هل تريد تأكيد: %s؟ أرسل \"نعم\" للتأكيد أو أي رد آخر للإلغاء.", description)
-	log.Printf("[workflow] Confirmation requested for %s tool '%s' on chat %s", riskOf(toolID), toolID, state.ChatID)
+	trace.Logf(ctx, "[workflow] Confirmation requested for %s tool '%s' on chat %s", riskOf(toolID), toolID, state.ChatID)
 	return nil
 }
 
@@ -113,7 +113,7 @@ func (e *WorkflowEngine) resolvePendingConfirmation(ctx context.Context, state *
 			"tool":   pending.ToolID,
 			"output": map[string]interface{}{"status": "confirmation_expired"},
 		})
-		log.Printf("[workflow] Pending confirmation for '%s' on chat %s expired", pending.ToolID, state.ChatID)
+		trace.Logf(ctx, "[workflow] Pending confirmation for '%s' on chat %s expired", pending.ToolID, state.ChatID)
 		return false, nil
 	}
 
@@ -135,7 +135,7 @@ func (e *WorkflowEngine) resolvePendingConfirmation(ctx context.Context, state *
 			"output": map[string]interface{}{"status": "cancelled"},
 		})
 		state.FinalReply = "حسناً، ألغيت العملية. أرسل طلبك من جديد إذا أردت تنفيذ شيء آخر."
-		log.Printf("[workflow] Pending confirmation for '%s' on chat %s cancelled by user", pending.ToolID, state.ChatID)
+		trace.Logf(ctx, "[workflow] Pending confirmation for '%s' on chat %s cancelled by user", pending.ToolID, state.ChatID)
 		return true, nil
 	}
 
@@ -166,6 +166,6 @@ func (e *WorkflowEngine) resolvePendingConfirmation(ctx context.Context, state *
 		state.FinalReply = fmt.Sprintf("تعذر تنفيذ العملية: %s", errText)
 	}
 
-	log.Printf("[workflow] Confirmed action '%s' executed on chat %s", pending.ToolID, state.ChatID)
+	trace.Logf(ctx, "[workflow] Confirmed action '%s' executed on chat %s", pending.ToolID, state.ChatID)
 	return true, nil
 }

@@ -30,6 +30,8 @@ type Config struct {
 	SecureCookie         bool
 	AdminUsername        string
 	AdminPassword        string
+	LlmFallbackModel     string
+	ErrorWebhookURL      string
 }
 
 func LoadConfig() *Config {
@@ -86,6 +88,11 @@ func LoadConfig() *Config {
 
 	secureCookie, _ := strconv.ParseBool(os.Getenv("SECURE_COOKIE"))
 
+	llmFallbackModel := os.Getenv("LLM_FALLBACK_MODEL")
+	if llmFallbackModel == "" {
+		llmFallbackModel = "gpt-4o-mini"
+	}
+
 	return &Config{
 		DatabaseURL:         os.Getenv("DATABASE_URL"),
 		Port:                port,
@@ -108,6 +115,8 @@ func LoadConfig() *Config {
 		SecureCookie:        secureCookie,
 		AdminUsername:       os.Getenv("ADMIN_USERNAME"),
 		AdminPassword:       os.Getenv("ADMIN_PASSWORD"),
+		LlmFallbackModel:    llmFallbackModel,
+		ErrorWebhookURL:     os.Getenv("ERROR_WEBHOOK_URL"),
 	}
 }
 

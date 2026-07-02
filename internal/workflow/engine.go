@@ -11,6 +11,7 @@ import (
 	"sawt-go/config"
 	"sawt-go/database"
 	"sawt-go/internal/erp"
+	"sawt-go/internal/trace"
 	"strings"
 	"time"
 )
@@ -82,12 +83,22 @@ type PropertySchema struct {
 // to the LLM exclusively through this, so tests can inject a fake.
 type completionFn func(ctx context.Context, messages []Message, tools []ToolDefinition, temp float32, maxTokens int) (*Message, error)
 
+// llmProvider is one OpenAI-compatible chat-completions endpoint in the
+// fallback chain (same cascade pattern as the STT/TTS orchestrators).
+type llmProvider struct {
+	Name    string
+	BaseURL string
+	APIKey  string
+	Model   string
+}
+
 type WorkflowEngine struct {
 	cfg        *config.Config
 	erpClient  *erp.Client
 	httpClient *http.Client
 	queries    database.Querier
 	complete   completionFn
+	providers  []llmProvider
 }
 
 func NewWorkflowEngine(cfg *config.Config, erpClient *erp.Client, queries database.Querier) *WorkflowEngine {
@@ -99,20 +110,53 @@ func NewWorkflowEngine(cfg *config.Config, erpClient *erp.Client, queries databa
 			Timeout: 30 * time.Second,
 		},
 	}
+
+	if cfg.NimAPIKey != "" {
+		e.providers = append(e.providers, llmProvider{
+			Name: "nim", BaseURL: cfg.NimBaseURL, APIKey: cfg.NimAPIKey, Model: cfg.NimModel,
+		})
+		log.Println("Workflow: NIM LLM provider registered (Rank 1).")
+	} else {
+		log.Println("Workflow: NIM LLM provider skipped (NIM_API_KEY not set).")
+	}
+	if cfg.OpenaiAPIKey != "" {
+		e.providers = append(e.providers, llmProvider{
+			Name: "openai-compatible", BaseURL: cfg.OpenaiAPIBase, APIKey: cfg.OpenaiAPIKey, Model: cfg.LlmFallbackModel,
+		})
+		log.Println("Workflow: OpenAI-compatible fallback LLM provider registered (Rank 2).")
+	} else {
+		log.Println("Workflow: OpenAI-compatible fallback LLM provider skipped (OPENAI_API_KEY not set).")
+	}
+
 	e.complete = e.chatCompletions
 	return e
 }
 
-// chatCompletions makes a standard HTTP request to the configured OpenAI-compatible LLM endpoint (NVIDIA NIM).
+// chatCompletions cascades through the registered LLM providers, returning the
+// first successful completion.
 func (e *WorkflowEngine) chatCompletions(ctx context.Context, messages []Message, tools []ToolDefinition, temp float32, maxTokens int) (*Message, error) {
-	if e.cfg.NimAPIKey == "" {
-		return nil, fmt.Errorf("NIM_API_KEY is not configured")
+	if len(e.providers) == 0 {
+		return nil, fmt.Errorf("no LLM providers configured (set NIM_API_KEY and/or OPENAI_API_KEY)")
 	}
 
-	url := fmt.Sprintf("%s/chat/completions", e.cfg.NimBaseURL)
+	var lastErr error
+	for _, p := range e.providers {
+		msg, err := e.callProvider(ctx, p, messages, tools, temp, maxTokens)
+		if err == nil {
+			return msg, nil
+		}
+		trace.Logf(ctx, "[workflow] LLM provider '%s' failed, trying next: %v", p.Name, err)
+		lastErr = err
+	}
+	return nil, fmt.Errorf("all LLM providers failed: %w", lastErr)
+}
+
+// callProvider makes a standard HTTP request to one OpenAI-compatible endpoint.
+func (e *WorkflowEngine) callProvider(ctx context.Context, p llmProvider, messages []Message, tools []ToolDefinition, temp float32, maxTokens int) (*Message, error) {
+	url := fmt.Sprintf("%s/chat/completions", p.BaseURL)
 
 	payload := ChatCompletionRequest{
-		Model:       e.cfg.NimModel,
+		Model:       p.Model,
 		Messages:    messages,
 		Temperature: temp,
 		MaxTokens:   maxTokens,
@@ -130,7 +174,7 @@ func (e *WorkflowEngine) chatCompletions(ctx context.Context, messages []Message
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+e.cfg.NimAPIKey)
+	req.Header.Set("Authorization", "Bearer "+p.APIKey)
 
 	resp, err := e.httpClient.Do(req)
 	if err != nil {
@@ -199,7 +243,7 @@ func (e *WorkflowEngine) ClassifyIntent(ctx context.Context, state *State) error
 
 	msg, err := e.complete(ctx, messages, nil, 0.0, 10)
 	if err != nil {
-		log.Printf("[workflow] ClassifyIntent failed, defaulting to operations: %v", err)
+		trace.Logf(ctx, "[workflow] ClassifyIntent failed, defaulting to operations: %v", err)
 		state.Intent = "operations"
 		return nil
 	}
@@ -217,14 +261,14 @@ func (e *WorkflowEngine) ClassifyIntent(ctx context.Context, state *State) error
 		state.Intent = "operations" // Safe default
 	}
 
-	log.Printf("[workflow] Classified intent: '%s'", state.Intent)
+	trace.Logf(ctx, "[workflow] Classified intent: '%s'", state.Intent)
 	return nil
 }
 
 func (e *WorkflowEngine) Execute(ctx context.Context, state *State) error {
 	// 0. A chat waiting on a yes/no consumes this message first.
 	if handled, err := e.resolvePendingConfirmation(ctx, state); err != nil {
-		log.Printf("[workflow] Pending-confirmation resolution failed: %v", err)
+		trace.Logf(ctx, "[workflow] Pending-confirmation resolution failed: %v", err)
 	} else if handled {
 		return nil
 	}
@@ -382,7 +426,7 @@ func (e *WorkflowEngine) executeOperations(ctx context.Context, state *State) er
 
 	maxIterations := 4
 	for i := 0; i < maxIterations; i++ {
-		log.Printf("[workflow] Running LLM iteration %d...", i+1)
+		trace.Logf(ctx, "[workflow] Running LLM iteration %d...", i+1)
 		aiMsg, err := e.complete(ctx, messages, tools, 0.0, 400)
 		if err != nil {
 			return fmt.Errorf("LLM operations execution call failed: %w", err)
@@ -398,7 +442,7 @@ func (e *WorkflowEngine) executeOperations(ctx context.Context, state *State) er
 
 		// Execute tool calls
 		for _, call := range aiMsg.ToolCalls {
-			log.Printf("[workflow] LLM requested tool call: '%s' with arguments: %s", call.Function.Name, call.Function.Arguments)
+			trace.Logf(ctx, "[workflow] LLM requested tool call: '%s' with arguments: %s", call.Function.Name, call.Function.Arguments)
 
 			// Parse arguments
 			var args map[string]interface{}

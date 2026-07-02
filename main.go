@@ -15,8 +15,10 @@ import (
 	"sawt-go/database"
 	"sawt-go/internal/audio"
 	"sawt-go/internal/erp"
+	"sawt-go/internal/monitor"
 	"sawt-go/internal/ratelimit"
 	"sawt-go/internal/speech"
+	"sawt-go/internal/trace"
 	waClient "sawt-go/internal/whatsmeow"
 	"sawt-go/internal/workflow"
 	"sawt-go/web"
@@ -45,6 +47,7 @@ func main() {
 	log.Println("Starting Sawt Unified Daemon...")
 
 	cfg := config.LoadConfig()
+	monitor.Init(cfg.ErrorWebhookURL)
 
 	// 1. Initialize Database pgx connection pool
 	ctx, cancel := context.WithCancel(context.Background())
@@ -251,19 +254,28 @@ func handleIncomingMessage(
 		return
 	}
 	if evt.Info.IsGroup {
-		log.Printf("Inbound: Skipping group message %s from %s", evt.Info.ID, evt.Info.Chat.String())
+		trace.Logf(ctx, "Inbound: Skipping group message %s from %s", evt.Info.ID, evt.Info.Chat.String())
 		return
 	}
 
-	log.Printf("Inbound: Received message %s from %s", evt.Info.ID, evt.Info.Chat.String())
+	// Every log line for this message is grep-able by its WhatsApp message id.
+	ctx = trace.With(ctx, evt.Info.ID)
+	defer func() {
+		if r := recover(); r != nil {
+			monitor.ReportPanic("handleIncomingMessage", r)
+			sendTextReply(ctx, client, evt.Info.Chat, "حدث خطأ غير متوقع أثناء معالجة طلبك.")
+		}
+	}()
+
+	trace.Logf(ctx, "Inbound: Received message from %s", evt.Info.Chat.String())
 
 	// Throttle per chat so one number can't hammer the LLM/ERP pipeline.
 	if allowed, count := inboundLimiter.Allow(evt.Info.Chat.String()); !allowed {
 		// Warn only on the first message over the limit; drop the rest silently.
 		if count == 9 {
-			sendTextReply(client, evt.Info.Chat, "أرسلت رسائل كثيرة خلال وقت قصير. يرجى الانتظار قليلاً ثم المحاولة مرة أخرى.")
+			sendTextReply(ctx, client, evt.Info.Chat, "أرسلت رسائل كثيرة خلال وقت قصير. يرجى الانتظار قليلاً ثم المحاولة مرة أخرى.")
 		}
-		log.Printf("Inbound: Rate limit exceeded for %s (%d msgs/min), dropping message", evt.Info.Chat.String(), count)
+		trace.Logf(ctx, "Inbound: Rate limit exceeded for %s (%d msgs/min), dropping message", evt.Info.Chat.String(), count)
 		return
 	}
 
@@ -284,13 +296,13 @@ func handleIncomingMessage(
 			PromptOverride: nil,
 		})
 		if err != nil {
-			log.Printf("Inbound: Warning: Failed to auto-create contact %s: %v", evt.Info.Chat.String(), err)
+			trace.Logf(ctx, "Inbound: Warning: Failed to auto-create contact %s: %v", evt.Info.Chat.String(), err)
 		} else {
-			log.Printf("Inbound: Auto-created new contact in database: %s (%s)", contact.Name, contact.ChatID)
+			trace.Logf(ctx, "Inbound: Auto-created new contact in database: %s (%s)", contact.Name, contact.ChatID)
 		}
 	} else if !contact.Enabled {
 		// Drop message processing if contact is explicitly disabled
-		log.Printf("Inbound: Discarding message from disabled contact %s (%s)", contact.Name, contact.ChatID)
+		trace.Logf(ctx, "Inbound: Discarding message from disabled contact %s (%s)", contact.Name, contact.ChatID)
 		return
 	}
 
@@ -314,20 +326,20 @@ func handleIncomingMessage(
 
 	// 1. Handle STT if audio message
 	if isAudio {
-		log.Println("Inbound: Message contains audio. Downloading...")
+		trace.Logf(ctx, "Inbound: Message contains audio. Downloading...")
 		incomingAudio, err = client.Download(ctx, evt.Message.AudioMessage)
 		if err != nil {
-			log.Printf("Inbound: Failed to download audio: %v", err)
-			sendTextReply(client, evt.Info.Chat, "عذراً، لم أتمكن من تحميل الرسالة الصوتية.")
+			trace.Logf(ctx, "Inbound: Failed to download audio: %v", err)
+			sendTextReply(ctx, client, evt.Info.Chat, "عذراً، لم أتمكن من تحميل الرسالة الصوتية.")
 			return
 		}
 
 		// Transcode OGG/Opus to WAV
-		log.Println("Inbound: Transcoding OGG/Opus to WAV...")
+		trace.Logf(ctx, "Inbound: Transcoding OGG/Opus to WAV...")
 		wavBytes, err := audio.OggToWav(incomingAudio)
 		if err != nil {
-			log.Printf("Inbound: Audio transcoding failed: %v", err)
-			sendTextReply(client, evt.Info.Chat, "عذراً، فشل معالجة الملف الصوتي.")
+			trace.Logf(ctx, "Inbound: Audio transcoding failed: %v", err)
+			sendTextReply(ctx, client, evt.Info.Chat, "عذراً، فشل معالجة الملف الصوتي.")
 			return
 		}
 
@@ -338,12 +350,12 @@ func handleIncomingMessage(
 		sttMs = int32(time.Since(sttStart).Milliseconds())
 		
 		if err != nil {
-			log.Printf("Inbound: STT Transcription failed: %v", err)
-			sendTextReply(client, evt.Info.Chat, "عذراً، لم أتمكن من تحويل الصوت إلى نص.")
+			monitor.ReportError(ctx, "stt", err)
+			sendTextReply(ctx, client, evt.Info.Chat, "عذراً، لم أتمكن من تحويل الصوت إلى نص.")
 			return
 		}
 
-		log.Printf("Inbound: Audio transcribed in %dms via %s: '%s'", sttMs, sttProvider, text)
+		trace.Logf(ctx, "Inbound: Audio transcribed in %dms via %s: '%s'", sttMs, sttProvider, text)
 
 		// Log to stt_history
 		_ = queries.CreateSttHistory(ctx, database.CreateSttHistoryParams{
@@ -364,13 +376,13 @@ func handleIncomingMessage(
 	phone := strings.Split(evt.Info.Chat.String(), "@")[0]
 	identity, err = erpClient.ResolveIdentity(ctx, phone)
 	if err != nil {
-		log.Printf("Inbound: Identity resolution failed: %v", err)
+		monitor.ReportError(ctx, "identity", err)
 	}
 
 	// 3. Load conversation memory, then invoke the workflow with real history
 	summary, history, err := wfEngine.LoadConversation(ctx, evt.Info.Chat.String())
 	if err != nil {
-		log.Printf("Inbound: Warning: failed to load conversation history: %v", err)
+		trace.Logf(ctx, "Inbound: Warning: failed to load conversation history: %v", err)
 	}
 
 	messagesHistory := append(history, workflow.Message{
@@ -390,13 +402,13 @@ func handleIncomingMessage(
 	llmMs = int32(time.Since(llmStart).Milliseconds())
 
 	if err != nil {
-		log.Printf("Inbound: Agent workflow execution failed: %v", err)
-		sendTextReply(client, evt.Info.Chat, "حدث خطأ أثناء معالجة طلبك.")
+		monitor.ReportError(ctx, "workflow", err)
+		sendTextReply(ctx, client, evt.Info.Chat, "حدث خطأ أثناء معالجة طلبك.")
 		return
 	}
 
 	replyText := state.FinalReply
-	log.Printf("Inbound: Agent replied in %dms: '%s'", llmMs, replyText)
+	trace.Logf(ctx, "Inbound: Agent replied in %dms: '%s'", llmMs, replyText)
 
 	// Persist this exchange so future messages carry conversation context.
 	wfEngine.SaveTurns(ctx, evt.Info.Chat.String(), text, replyText)
@@ -404,20 +416,20 @@ func handleIncomingMessage(
 	// 4. Handle TTS if original message was audio
 	var replyAudio []byte
 	if isAudio && replyText != "" {
-		log.Println("Outbound: Synthesizing reply text to speech...")
+		trace.Logf(ctx, "Outbound: Synthesizing reply text to speech...")
 		ttsStart := time.Now()
 		var rawWav []byte
 		rawWav, ttsProvider, err = ttsOrch.Synthesize(ctx, replyText, "ar")
 		ttsMs = int32(time.Since(ttsStart).Milliseconds())
 
 		if err != nil {
-			log.Printf("Outbound: TTS Synthesis failed: %v", err)
+			trace.Logf(ctx, "Outbound: TTS Synthesis failed: %v", err)
 		} else {
 			// Transcode WAV to OGG/Opus
-			log.Println("Outbound: Transcoding WAV to OGG/Opus...")
+			trace.Logf(ctx, "Outbound: Transcoding WAV to OGG/Opus...")
 			replyAudio, err = audio.WavToOpus(rawWav)
 			if err != nil {
-				log.Printf("Outbound: Audio transcoding failed: %v", err)
+				trace.Logf(ctx, "Outbound: Audio transcoding failed: %v", err)
 				replyAudio = nil // Send text as fallback
 			} else {
 				// Log to tts_history
@@ -439,11 +451,11 @@ func handleIncomingMessage(
 
 	// 5. Send reply
 	if len(replyAudio) > 0 {
-		log.Println("Outbound: Uploading audio response to WhatsApp...")
+		trace.Logf(ctx, "Outbound: Uploading audio response to WhatsApp...")
 		resp, err := client.Upload(context.Background(), replyAudio, whatsmeow.MediaAudio)
 		if err != nil {
-			log.Printf("Outbound: Failed to upload audio: %v, falling back to text", err)
-			sendTextReply(client, evt.Info.Chat, replyText)
+			trace.Logf(ctx, "Outbound: Failed to upload audio: %v, falling back to text", err)
+			sendTextReply(ctx, client, evt.Info.Chat, replyText)
 			
 			errStr := err.Error()
 			activityStatus = "failed"
@@ -463,14 +475,14 @@ func handleIncomingMessage(
 			}
 			_, err = client.SendMessage(context.Background(), evt.Info.Chat, audioMsg)
 			if err != nil {
-				log.Printf("Outbound: Failed to send audio message: %v", err)
+				monitor.ReportError(ctx, "whatsapp-send", err)
 				errStr := err.Error()
 				activityStatus = "failed"
 				activityError = &errStr
 			}
 		}
 	} else if replyText != "" {
-		sendTextReply(client, evt.Info.Chat, replyText)
+		sendTextReply(ctx, client, evt.Info.Chat, replyText)
 	}
 
 	// 6. Log Activity Log to Neon DB
@@ -513,12 +525,12 @@ func handleIncomingMessage(
 	})
 }
 
-func sendTextReply(client *whatsmeow.Client, chat types.JID, text string) {
+func sendTextReply(ctx context.Context, client *whatsmeow.Client, chat types.JID, text string) {
 	textMsg := &proto.Message{
 		Conversation: googleProto.String(text),
 	}
 	_, err := client.SendMessage(context.Background(), chat, textMsg)
 	if err != nil {
-		log.Printf("Outbound: Failed to send text reply: %v", err)
+		trace.Logf(ctx, "Outbound: Failed to send text reply: %v", err)
 	}
 }

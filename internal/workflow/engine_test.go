@@ -3,6 +3,8 @@ package workflow
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -159,5 +161,43 @@ func TestExecuteAccountingAndAdministrationAreStubbed(t *testing.T) {
 		if state.FinalReply == "" {
 			t.Fatalf("expected a stub reply for %s intent", intent)
 		}
+	}
+}
+
+func TestChatCompletionsFallsBackToSecondProvider(t *testing.T) {
+	// Primary always errors.
+	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer failing.Close()
+
+	// Fallback succeeds.
+	working := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"from fallback"}}]}`))
+	}))
+	defer working.Close()
+
+	e := NewWorkflowEngine(&config.Config{}, erp.NewClient("http://localhost:0", ""), nil)
+	e.providers = []llmProvider{
+		{Name: "primary", BaseURL: failing.URL, APIKey: "k1", Model: "m1"},
+		{Name: "fallback", BaseURL: working.URL, APIKey: "k2", Model: "m2"},
+	}
+
+	msg, err := e.chatCompletions(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil, 0, 10)
+	if err != nil {
+		t.Fatalf("expected fallback to succeed, got error: %v", err)
+	}
+	if msg.Content != "from fallback" {
+		t.Fatalf("expected fallback content, got %q", msg.Content)
+	}
+}
+
+func TestChatCompletionsErrorsWhenNoProviders(t *testing.T) {
+	e := NewWorkflowEngine(&config.Config{}, erp.NewClient("http://localhost:0", ""), nil)
+	e.providers = nil
+
+	if _, err := e.chatCompletions(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil, 0, 10); err == nil {
+		t.Fatal("expected an error when no LLM providers are configured")
 	}
 }
