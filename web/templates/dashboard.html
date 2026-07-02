@@ -1,0 +1,228 @@
+{{if .Partial}}
+  {{template "whatsapp_card" .}}
+{{else}}
+  {{template "layout" .}}
+{{end}}
+
+{{define "content"}}
+<div class="space-y-8">
+
+    <!-- WhatsApp Pairing and Metrics Layout -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <!-- WhatsApp Pairing Card (Left 2 cols) -->
+        <div class="lg:col-span-2">
+            {{template "whatsapp_card" .}}
+        </div>
+
+        <!-- System Quick metrics (Right 1 col) -->
+        <div class="grid grid-cols-1 gap-4">
+            <!-- Metric 1 -->
+            <div class="glass p-4 rounded-xl flex items-center justify-between border border-indigo-950/40">
+                <div>
+                    <span class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Memory Mode</span>
+                    <h3 class="text-sm font-bold text-white mt-0.5">Pool (Stateless)</h3>
+                </div>
+                <div class="p-2 bg-indigo-500/10 text-indigo-400 rounded-lg">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                </div>
+            </div>
+            <!-- Metric 2 -->
+            <div class="glass p-4 rounded-xl flex items-center justify-between border border-indigo-950/40">
+                <div>
+                    <span class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Database Node</span>
+                    <h3 class="text-sm font-bold text-white mt-0.5">Neon Serverless</h3>
+                </div>
+                <div class="p-2 bg-cyan-500/10 text-cyan-400 rounded-lg">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.58 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.58 4 8 4s8-1.79 8-4M4 7c0-2.21 3.58-4 8-4s8 1.79 8 4m0 5c0 2.21-3.58 4-8 4s-8-1.79-8-4"></path></svg>
+                </div>
+            </div>
+            <!-- Metric 3 -->
+            <div class="glass p-4 rounded-xl flex items-center justify-between border border-indigo-950/40">
+                <div>
+                    <span class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">ASR/TTS Latency</span>
+                    <h3 class="text-sm font-bold text-white mt-0.5">Free Tier Fallback</h3>
+                </div>
+                <div class="p-2 bg-pink-500/10 text-pink-400 rounded-lg">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Active Contacts and Recent Actions split -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <!-- Recent Activities (Left 2 cols) -->
+        <div class="glass rounded-2xl border border-indigo-950/40 lg:col-span-2 overflow-hidden flex flex-col">
+            <div class="p-6 border-b border-indigo-950/50 flex justify-between items-center shrink-0">
+                <h3 class="font-bold text-white text-lg">Recent Chat Transactions</h3>
+                <span class="text-xs bg-indigo-950/60 text-indigo-300 px-3 py-1 rounded-full font-medium">Last 10 Actions</span>
+            </div>
+            <div class="overflow-x-auto flex-1">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="border-b border-indigo-950/50 text-xs text-gray-400 uppercase font-semibold">
+                            <th class="p-4">Time</th>
+                            <th class="p-4">Contact</th>
+                            <th class="p-4">Direction</th>
+                            <th class="p-4">Transcript / Reply</th>
+                            <th class="p-4">Latency</th>
+                            <th class="p-4">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-indigo-950/30 text-sm text-gray-300">
+                        {{range .Activities}}
+                        <tr class="hover:bg-slate-900/10 transition">
+                            <td class="p-4 whitespace-nowrap text-xs text-gray-400">
+                                {{.Ts.Format "15:04:05 02 Jan"}}
+                            </td>
+                            <td class="p-4 whitespace-nowrap">
+                                <span class="font-semibold block text-white">{{.ContactName}}</span>
+                                <span class="text-xs text-gray-400">{{.ChatID}}</span>
+                            </td>
+                            <td class="p-4 whitespace-nowrap">
+                                {{if eq .Direction "in"}}
+                                <span class="text-xs bg-indigo-950 text-indigo-400 px-2 py-0.5 rounded-md font-semibold border border-indigo-900">Inbound</span>
+                                {{else}}
+                                <span class="text-xs bg-emerald-950 text-emerald-400 px-2 py-0.5 rounded-md font-semibold border border-emerald-900">Outbound</span>
+                                {{end}}
+                            </td>
+                            <td class="p-4 max-w-xs">
+                                {{if .Transcript}}
+                                <div class="text-xs text-indigo-400 font-semibold">🗣️ {{.Transcript}}</div>
+                                {{end}}
+                                {{if .Reply}}
+                                <div class="text-white text-xs mt-1">🤖 {{.Reply}}</div>
+                                {{end}}
+                            </td>
+                            <td class="p-4 whitespace-nowrap text-xs text-gray-400">
+                                {{.TotalMs}}ms
+                            </td>
+                            <td class="p-4 whitespace-nowrap">
+                                {{if eq .Status "ok"}}
+                                <span class="text-emerald-400 font-medium text-xs flex items-center">
+                                    <span class="h-2 w-2 rounded-full bg-emerald-400 mr-2"></span> Success
+                                </span>
+                                {{else}}
+                                <span class="text-red-400 font-medium text-xs flex items-center" title="{{if .Error}}{{.Error}}{{end}}">
+                                    <span class="h-2 w-2 rounded-full bg-red-400 mr-2"></span> Error
+                                </span>
+                                {{end}}
+                            </td>
+                        </tr>
+                        {{else}}
+                        <tr>
+                            <td colspan="6" class="p-8 text-center text-gray-400 text-sm">
+                                No activity records found. Chat with Sawt on WhatsApp to see logs.
+                            </td>
+                        </tr>
+                        {{end}}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- WhatsApp Contacts list (Right 1 col) -->
+        <div class="glass rounded-2xl border border-indigo-950/40 overflow-hidden flex flex-col">
+            <div class="p-6 border-b border-indigo-950/50 shrink-0">
+                <h3 class="font-bold text-white text-lg">Mapped WhatsApp Contacts</h3>
+            </div>
+            <div class="p-4 divide-y divide-indigo-950/30 overflow-y-auto flex-1 space-y-4">
+                {{range .Contacts}}
+                <div class="flex items-center justify-between py-3 first:pt-0 last:pb-0">
+                    <div>
+                        <div class="font-semibold text-white text-sm">{{.Name}}</div>
+                        <div class="text-xs text-gray-400 mt-0.5">{{.ChatID}}</div>
+                        {{if .PromptOverride}}
+                        <div class="text-[10px] bg-slate-900 text-indigo-400 px-1.5 py-0.5 rounded border border-indigo-950 mt-1 inline-block">Prompt Override Set</div>
+                        {{end}}
+                    </div>
+                    <div class="flex flex-col items-end">
+                        {{if .Enabled}}
+                        <span class="text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-900 px-2 py-0.5 rounded-full font-bold">Enabled</span>
+                        {{else}}
+                        <span class="text-[10px] bg-gray-900 text-gray-400 border border-gray-800 px-2 py-0.5 rounded-full font-bold">Disabled</span>
+                        {{end}}
+                        <span class="text-xs text-gray-400 mt-1">{{if .AgentID}}{{.AgentID}}{{else}}default{{end}}</span>
+                    </div>
+                </div>
+                {{else}}
+                <div class="text-center text-gray-400 text-sm py-8">
+                    No contacts mapped. Enabled numbers will appear here.
+                </div>
+                {{end}}
+            </div>
+        </div>
+    </div>
+
+</div>
+{{end}}
+
+{{define "whatsapp_card"}}
+<div id="whatsapp-pairing-card" class="glass p-6 rounded-2xl border border-indigo-950/40 relative space-y-6"
+     {{if ne .WAStatus "connected"}}hx-get="/dashboard/whatsapp/status" hx-trigger="every 5s" hx-swap="outerHTML"{{end}}>
+    
+    <div class="flex items-center justify-between border-b border-indigo-950/50 pb-4">
+        <div>
+            <h3 class="font-bold text-white text-lg">WhatsApp Linking</h3>
+            <span class="text-xs text-gray-400">Connect Sawt daemon directly to your phone.</span>
+        </div>
+        <div>
+            {{if eq .WAStatus "connected"}}
+            <span class="text-xs bg-emerald-950 text-emerald-400 border border-emerald-900 px-3 py-1 rounded-full font-bold flex items-center">
+                <span class="h-2 w-2 rounded-full bg-emerald-400 mr-2 animate-pulse"></span> Connected
+            </span>
+            {{else if eq .WAStatus "qr_ready"}}
+            <span class="text-xs bg-amber-950 text-amber-400 border border-amber-900 px-3 py-1 rounded-full font-bold flex items-center">
+                <span class="h-2 w-2 rounded-full bg-amber-400 mr-2 animate-ping"></span> QR Code Ready
+            </span>
+            {{else if eq .WAStatus "pairing_ready"}}
+            <span class="text-xs bg-indigo-950 text-indigo-400 border border-indigo-900 px-3 py-1 rounded-full font-bold flex items-center">
+                <span class="h-2 w-2 rounded-full bg-indigo-400 mr-2 animate-pulse"></span> Code Generated
+            </span>
+            {{else}}
+            <span class="text-xs bg-red-950 text-red-400 border border-red-900 px-3 py-1 rounded-full font-bold flex items-center">
+                <span class="h-2 w-2 rounded-full bg-red-400 mr-2"></span> Disconnected
+            </span>
+            {{end}}
+        </div>
+    </div>
+
+    <!-- Status Content -->
+    {{if eq .WAStatus "connected"}}
+    <div class="text-gray-300 text-sm leading-relaxed">
+        🤖 Sawt is linked and running on WhatsApp. Voice notes received will be processed using Whisper STT, executed against the ERP toolpacks, and responded to using SILMA TTS audio.
+    </div>
+    {{else if eq .WAStatus "qr_ready"}}
+    <div class="space-y-4 text-center">
+        <p class="text-sm text-gray-300">Scan this QR code from your phone's WhatsApp linked devices screen:</p>
+        <canvas id="qr-code-canvas" class="mx-auto block p-2 bg-white rounded-xl shadow-inner border border-gray-700"></canvas>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js"></script>
+        <script>
+            new QRious({
+                element: document.getElementById('qr-code-canvas'),
+                value: '{{.WAQR}}',
+                size: 200
+            });
+        </script>
+    </div>
+    {{else if eq .WAStatus "pairing_ready"}}
+    <div class="space-y-4 text-center">
+        <p class="text-sm text-gray-300">Go to Linked Devices -> Link with phone number instead on your phone, and enter this code:</p>
+        <div class="text-3xl font-mono font-bold tracking-widest text-indigo-400 bg-indigo-950/40 border border-indigo-900/60 rounded-xl py-4 inline-block px-8">
+            {{.WAPair}}
+        </div>
+    </div>
+    {{else}}
+    <div class="space-y-4">
+        <p class="text-sm text-gray-300">Link WhatsApp by requesting an 8-character pairing code directly to your phone:</p>
+        <form hx-post="/dashboard/whatsapp/pair-code" hx-target="#whatsapp-pairing-card" hx-swap="outerHTML" class="flex gap-2">
+            <input type="text" name="phone" placeholder="9665xxxxxxxx (country code first)" required
+                   class="flex-1 bg-slate-950/60 border border-indigo-950 focus:border-indigo-500 rounded-xl px-4 py-2.5 text-sm text-white outline-none transition duration-200">
+            <button type="submit" class="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl transition duration-200 active:scale-95">
+                Generate Code
+            </button>
+        </form>
+    </div>
+    {{end}}
+</div>
+{{end}}

@@ -1,0 +1,72 @@
+{{define "content"}}
+<div class="space-y-8 max-w-4xl">
+
+    <!-- Header Description -->
+    <div>
+        <p class="text-sm text-gray-400">View and update the active prompts and responses for your Sawt agents in Neon DB. Changes apply immediately to WhatsApp without restarting the server.</p>
+    </div>
+
+    <!-- Feedback Banner (Target for HTMX updates) -->
+    <div id="feedback" class="transition duration-300"></div>
+
+    {{range .Agents}}
+    <!-- Agent Editor Box -->
+    <div class="glass p-8 rounded-2xl border border-indigo-950/40 relative space-y-6">
+        <div class="flex items-center justify-between border-b border-indigo-950/50 pb-4">
+            <div>
+                <h3 class="text-xl font-bold text-white">{{.Name}}</h3>
+                <span class="text-xs text-indigo-400 font-mono">ID: {{.ID}}</span>
+            </div>
+            <div>
+                <span class="text-xs bg-indigo-950/60 text-indigo-300 px-3 py-1 rounded-full font-semibold border border-indigo-900 capitalize">{{.Status}}</span>
+            </div>
+        </div>
+
+        <!-- Update Form using HTMX -->
+        <form hx-post="/dashboard/workflows/update" hx-target="#feedback" hx-swap="innerHTML" class="space-y-6">
+            <!-- Hidden ID -->
+            <input type="hidden" name="id" value="{{.ID}}">
+            <input type="hidden" name="name" value="{{.Name}}">
+
+            <!-- System Prompt Textarea -->
+            <div>
+                <label class="block text-sm font-semibold text-gray-300 mb-2">System Instructions / Prompt</label>
+                <textarea name="system_prompt" rows="8" required 
+                    class="w-full bg-[#03060c]/60 border border-indigo-950/80 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-xl px-4 py-3 text-sm text-slate-300 font-mono leading-relaxed outline-none transition duration-200 resize-y">{{.SystemPrompt}}</textarea>
+                <span class="text-xs text-gray-500 mt-1 block">Injected as the primary instructions for the LLM during the operations loop. Do not include markdown formatting inside responses.</span>
+            </div>
+
+            <!-- Double Columns for Greetings/Failure Messages -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <!-- Greeting -->
+                <div>
+                    <label class="block text-sm font-semibold text-gray-300 mb-2">Greeting Message</label>
+                    <textarea name="greeting_message" rows="3" 
+                        class="w-full bg-[#03060c]/60 border border-indigo-950/80 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-xl px-4 py-3 text-sm text-slate-300 leading-relaxed outline-none transition duration-200 resize-none">{{.GreetingMessage}}</textarea>
+                </div>
+
+                <!-- Failure -->
+                <div>
+                    <label class="block text-sm font-semibold text-gray-300 mb-2">Fallback Failure Message</label>
+                    <textarea name="failure_message" rows="3" 
+                        class="w-full bg-[#03060c]/60 border border-indigo-950/80 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-xl px-4 py-3 text-sm text-slate-300 leading-relaxed outline-none transition duration-200 resize-none">{{.FailureMessage}}</textarea>
+                </div>
+            </div>
+
+            <!-- Submit -->
+            <div class="flex justify-end pt-2">
+                <button type="submit" 
+                    class="px-6 py-3 bg-gradient-to-r from-indigo-500 to-indigo-700 hover:from-indigo-600 hover:to-indigo-800 text-white font-semibold text-sm rounded-xl transition duration-200 shadow-md shadow-indigo-500/10 active:scale-[0.98]">
+                    Save Prompt Changes
+                </button>
+            </div>
+        </form>
+    </div>
+    {{else}}
+    <div class="glass p-8 text-center text-gray-400 rounded-2xl border border-indigo-950/40">
+        No active agents found in the `agents` database table. Create an agent records to edit system workflows.
+    </div>
+    {{end}}
+
+</div>
+{{end}}

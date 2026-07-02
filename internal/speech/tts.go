@@ -1,0 +1,59 @@
+package speech
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"sawt-go/config"
+	"sawt-go/internal/speech/providers"
+)
+
+type TTSOrchestrator struct {
+	chain []TextToSpeech
+}
+
+func NewTTSOrchestrator(cfg *config.Config) *TTSOrchestrator {
+	var chain []TextToSpeech
+
+	// 1. Primary: Google Cloud TTS (Standard Arabic)
+	if cfg.GcpApiKey != "" {
+		chain = append(chain, providers.NewGoogleProvider(cfg.GcpApiKey))
+		log.Println("TTS Orchestrator: Google Cloud TTS provider registered (Rank 1).")
+	} else {
+		log.Println("TTS Orchestrator: Google Cloud TTS provider skipped (GCP_API_KEY not set).")
+	}
+
+	// 2. Backup A: Hugging Face Spaces (facebook/mms-tts-ara)
+	// We can check for either HF API Key or just load it anyway since the Gradio Space is public
+	chain = append(chain, providers.NewHuggingFaceProvider(cfg.HfAPIKey))
+	log.Println("TTS Orchestrator: Hugging Face Spaces provider registered (Rank 2).")
+
+	// 3. Final Fallback: Local gTTS (Google Translate Web TTS Engine)
+	// Always available, zero dependencies, 100% free
+	chain = append(chain, providers.NewLocalProvider("", ""))
+	log.Println("TTS Orchestrator: Local gTTS provider registered (Rank 3).")
+
+	return &TTSOrchestrator{chain: chain}
+}
+
+// Synthesize cascades through the registered providers to synthesize text to audio.
+func (o *TTSOrchestrator) Synthesize(ctx context.Context, text string, language string) ([]byte, string, error) {
+	if len(o.chain) == 0 {
+		return nil, "", fmt.Errorf("no TTS providers are registered in the chain")
+	}
+
+	var lastErr error
+	for _, provider := range o.chain {
+		log.Printf("TTS Orchestrator: Attempting synthesis with provider '%s'...", provider.Name())
+		audioBytes, err := provider.Synthesize(ctx, text, language)
+		if err == nil && len(audioBytes) > 0 {
+			log.Printf("TTS Orchestrator: Success with provider '%s' (%d bytes).", provider.Name(), len(audioBytes))
+			return audioBytes, provider.Name(), nil
+		}
+
+		log.Printf("TTS Orchestrator: Provider '%s' failed: %v", provider.Name(), err)
+		lastErr = err
+	}
+
+	return nil, "", fmt.Errorf("all TTS providers failed in the fallback chain: %w", lastErr)
+}
