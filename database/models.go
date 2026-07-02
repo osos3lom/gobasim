@@ -89,6 +89,21 @@ type WaContact struct {
 	UpdatedAt      time.Time `json:"updated_at"`
 }
 
+type ConversationTurn struct {
+	ID      int64     `json:"id"`
+	ChatID  string    `json:"chat_id"`
+	Role    string    `json:"role"`
+	Content string    `json:"content"`
+	Ts      time.Time `json:"ts"`
+}
+
+type ConversationState struct {
+	ChatID            string    `json:"chat_id"`
+	Summary           string    `json:"summary"`
+	SummarizedThrough int64     `json:"summarized_through"`
+	UpdatedAt         time.Time `json:"updated_at"`
+}
+
 type WaActivity struct {
 	ID          string    `json:"id"`
 	Ts          time.Time `json:"ts"`

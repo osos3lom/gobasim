@@ -23,6 +23,10 @@ type Querier interface {
 	ListWaContacts(ctx context.Context) ([]WaContact, error)
 	CreateWaActivity(ctx context.Context, arg CreateWaActivityParams) error
 	ListRecentWaActivity(ctx context.Context, limit int32) ([]WaActivity, error)
+	CreateConversationTurn(ctx context.Context, arg CreateConversationTurnParams) (ConversationTurn, error)
+	ListConversationTurnsAfter(ctx context.Context, arg ListConversationTurnsAfterParams) ([]ConversationTurn, error)
+	GetConversationState(ctx context.Context, chatID string) (ConversationState, error)
+	UpsertConversationState(ctx context.Context, arg UpsertConversationStateParams) error
 }
 
 var _ Querier = (*Queries)(nil)

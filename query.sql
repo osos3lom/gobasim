@@ -96,3 +96,24 @@ INSERT INTO wa_activity (
 -- name: ListRecentWaActivity :many
 SELECT * FROM wa_activity
 ORDER BY ts DESC LIMIT $1;
+
+-- name: CreateConversationTurn :one
+INSERT INTO conversation_turns (chat_id, role, content)
+VALUES ($1, $2, $3)
+RETURNING id, chat_id, role, content, ts;
+
+-- name: ListConversationTurnsAfter :many
+SELECT id, chat_id, role, content, ts FROM conversation_turns
+WHERE chat_id = $1 AND id > $2
+ORDER BY id ASC
+LIMIT $3;
+
+-- name: GetConversationState :one
+SELECT chat_id, summary, summarized_through, updated_at FROM conversation_state
+WHERE chat_id = $1;
+
+-- name: UpsertConversationState :exec
+INSERT INTO conversation_state (chat_id, summary, summarized_through, updated_at)
+VALUES ($1, $2, $3, NOW())
+ON CONFLICT (chat_id) DO UPDATE
+SET summary = EXCLUDED.summary, summarized_through = EXCLUDED.summarized_through, updated_at = NOW();

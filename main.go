@@ -367,9 +367,13 @@ func handleIncomingMessage(
 		log.Printf("Inbound: Identity resolution failed: %v", err)
 	}
 
-	// 3. Invoke State Workflow
-	var messagesHistory []workflow.Message
-	messagesHistory = append(messagesHistory, workflow.Message{
+	// 3. Load conversation memory, then invoke the workflow with real history
+	summary, history, err := wfEngine.LoadConversation(ctx, evt.Info.Chat.String())
+	if err != nil {
+		log.Printf("Inbound: Warning: failed to load conversation history: %v", err)
+	}
+
+	messagesHistory := append(history, workflow.Message{
 		Role:    "user",
 		Content: text,
 	})
@@ -378,6 +382,7 @@ func handleIncomingMessage(
 		Messages:      messagesHistory,
 		ActorIdentity: identity,
 		ChatID:        evt.Info.Chat.String(),
+		Summary:       summary,
 	}
 
 	llmStart := time.Now()
@@ -392,6 +397,9 @@ func handleIncomingMessage(
 
 	replyText := state.FinalReply
 	log.Printf("Inbound: Agent replied in %dms: '%s'", llmMs, replyText)
+
+	// Persist this exchange so future messages carry conversation context.
+	wfEngine.SaveTurns(ctx, evt.Info.Chat.String(), text, replyText)
 
 	// 4. Handle TTS if original message was audio
 	var replyAudio []byte

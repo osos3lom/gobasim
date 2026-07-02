@@ -41,6 +41,9 @@ type State struct {
 	ToolResults   []map[string]interface{}
 	FinalReply    string
 	ChatID        string
+	// Summary is the rolling summary of older conversation turns that no
+	// longer fit in the replayed message window.
+	Summary string
 }
 
 // NIM / OpenAI Chat Completion API Request & Tool schema structs
@@ -83,11 +86,11 @@ type WorkflowEngine struct {
 	cfg        *config.Config
 	erpClient  *erp.Client
 	httpClient *http.Client
-	queries    *database.Queries
+	queries    database.Querier
 	complete   completionFn
 }
 
-func NewWorkflowEngine(cfg *config.Config, erpClient *erp.Client, queries *database.Queries) *WorkflowEngine {
+func NewWorkflowEngine(cfg *config.Config, erpClient *erp.Client, queries database.Querier) *WorkflowEngine {
 	e := &WorkflowEngine{
 		cfg:       cfg,
 		erpClient: erpClient,
@@ -244,6 +247,9 @@ func (e *WorkflowEngine) Execute(ctx context.Context, state *State) error {
 func (e *WorkflowEngine) executeGeneralChat(ctx context.Context, state *State) error {
 	systemPrompt := "You are Sawt, a friendly assistant for an Arabian horse stable. " +
 		"Reply briefly and naturally in the language the user used (Arabic or English) without any markdown formatting."
+	if state.Summary != "" {
+		systemPrompt += "\n\nSummary of the conversation so far:\n" + state.Summary
+	}
 
 	messages := append([]Message{{Role: "system", Content: systemPrompt}}, state.Messages...)
 	msg, err := e.complete(ctx, messages, nil, 0.3, 200)
@@ -356,10 +362,14 @@ func (e *WorkflowEngine) executeOperations(ctx context.Context, state *State) er
 		},
 	}
 
-	// Keep history to last 6 messages + system prompt
+	if state.Summary != "" {
+		systemPrompt += "\n\nSummary of the conversation so far:\n" + state.Summary
+	}
+
+	// Keep history to last 8 messages + system prompt
 	historyCount := len(state.Messages)
-	if historyCount > 6 {
-		historyCount = 6
+	if historyCount > 8 {
+		historyCount = 8
 	}
 	messages := append([]Message{{Role: "system", Content: systemPrompt}}, state.Messages[len(state.Messages)-historyCount:]...)
 

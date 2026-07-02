@@ -107,6 +107,22 @@ CREATE TABLE IF NOT EXISTS wa_activity (
     error TEXT
 );
 
+CREATE TABLE IF NOT EXISTS conversation_turns (
+    id BIGSERIAL PRIMARY KEY,
+    chat_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    ts TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS conversation_state (
+    chat_id TEXT PRIMARY KEY,
+    summary TEXT NOT NULL DEFAULT '',
+    summarized_through BIGINT NOT NULL DEFAULT 0,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_conversation_turns_chat_id ON conversation_turns (chat_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_tts_history_ts ON tts_history (ts DESC);
 CREATE INDEX IF NOT EXISTS idx_stt_history_ts ON stt_history (ts DESC);
 CREATE INDEX IF NOT EXISTS idx_wa_contacts_updated ON wa_contacts (updated_at DESC);
