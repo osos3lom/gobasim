@@ -32,6 +32,7 @@ type Config struct {
 	AdminPassword        string
 	LlmFallbackModel     string
 	ErrorWebhookURL      string
+	RetentionDays        int
 }
 
 func LoadConfig() *Config {
@@ -117,6 +118,7 @@ func LoadConfig() *Config {
 		AdminPassword:       os.Getenv("ADMIN_PASSWORD"),
 		LlmFallbackModel:    llmFallbackModel,
 		ErrorWebhookURL:     os.Getenv("ERROR_WEBHOOK_URL"),
+		RetentionDays:       GetEnvInt("RETENTION_DAYS", 90),
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"sawt-go/config"
 	"sawt-go/database"
@@ -22,6 +23,7 @@ import (
 	waClient "sawt-go/internal/whatsmeow"
 	"sawt-go/internal/workflow"
 	"sawt-go/web"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -48,6 +50,16 @@ func main() {
 
 	cfg := config.LoadConfig()
 	monitor.Init(cfg.ErrorWebhookURL)
+
+	// Voice notes require ffmpeg; fail fast at boot instead of on the first
+	// voice message. Set ALLOW_MISSING_FFMPEG=true for text-only deploys.
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		if allow, _ := strconv.ParseBool(os.Getenv("ALLOW_MISSING_FFMPEG")); allow {
+			log.Println("WARNING: ffmpeg not found on PATH — voice notes will fail (ALLOW_MISSING_FFMPEG=true).")
+		} else {
+			log.Fatal("Fatal: ffmpeg not found on PATH. Install it, or set ALLOW_MISSING_FFMPEG=true for a text-only deploy.")
+		}
+	}
 
 	// 1. Initialize Database pgx connection pool
 	ctx, cancel := context.WithCancel(context.Background())
@@ -92,6 +104,25 @@ func main() {
 		} else {
 			log.Println("Database: Default operations agent seeded successfully.")
 		}
+	}
+
+	// Retention: purge/redact PII-bearing rows older than RETENTION_DAYS
+	// (0 disables). Runs at boot and then daily.
+	if cfg.RetentionDays > 0 {
+		go func() {
+			ticker := time.NewTicker(24 * time.Hour)
+			defer ticker.Stop()
+			for {
+				runRetention(ctx, queries, cfg.RetentionDays)
+				select {
+				case <-ticker.C:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	} else {
+		log.Println("Retention: disabled (RETENTION_DAYS=0) — transcripts are kept indefinitely.")
 	}
 
 	// 2. Initialize Speech & Workflow Orchestrators
@@ -189,6 +220,27 @@ func main() {
 	log.Println("Shutting down daemon gracefully...")
 	waMgr.Client.Disconnect()
 	log.Println("Shutdown complete.")
+}
+
+// runRetention deletes or redacts PII-bearing rows older than the retention
+// window: STT/TTS history and conversation turns are deleted; wa_activity
+// rows are redacted in place so the audit metadata (timings, status, tool ids)
+// survives.
+func runRetention(ctx context.Context, queries *database.Queries, days int) {
+	cutoff := time.Now().AddDate(0, 0, -days)
+	log.Printf("Retention: purging/redacting rows older than %s (%d days)...", cutoff.Format("2006-01-02"), days)
+
+	for name, fn := range map[string]func(context.Context, time.Time) error{
+		"stt_history":        queries.PurgeSttHistoryBefore,
+		"tts_history":        queries.PurgeTtsHistoryBefore,
+		"conversation_turns": queries.PurgeConversationTurnsBefore,
+		"wa_activity":        queries.RedactWaActivityBefore,
+	} {
+		if err := fn(ctx, cutoff); err != nil {
+			monitor.ReportError(ctx, "retention:"+name, err)
+		}
+	}
+	log.Println("Retention: pass complete.")
 }
 
 func seedAdminUser(ctx context.Context, pool *pgxpool.Pool, queries *database.Queries, cfg *config.Config) error {

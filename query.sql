@@ -133,3 +133,17 @@ WHERE chat_id = $1;
 
 -- name: DeletePendingConfirmation :exec
 DELETE FROM pending_confirmations WHERE chat_id = $1;
+
+-- name: PurgeSttHistoryBefore :exec
+DELETE FROM stt_history WHERE ts < $1;
+
+-- name: PurgeTtsHistoryBefore :exec
+DELETE FROM tts_history WHERE ts < $1;
+
+-- name: PurgeConversationTurnsBefore :exec
+DELETE FROM conversation_turns WHERE ts < $1;
+
+-- name: RedactWaActivityBefore :exec
+UPDATE wa_activity
+SET transcript = '[redacted]', reply = '[redacted]'
+WHERE ts < $1 AND transcript <> '[redacted]';

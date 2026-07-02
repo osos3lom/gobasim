@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"time"
 )
 
 type Querier interface {
@@ -30,6 +31,10 @@ type Querier interface {
 	UpsertPendingConfirmation(ctx context.Context, arg UpsertPendingConfirmationParams) error
 	GetPendingConfirmation(ctx context.Context, chatID string) (PendingConfirmation, error)
 	DeletePendingConfirmation(ctx context.Context, chatID string) error
+	PurgeSttHistoryBefore(ctx context.Context, cutoff time.Time) error
+	PurgeTtsHistoryBefore(ctx context.Context, cutoff time.Time) error
+	PurgeConversationTurnsBefore(ctx context.Context, cutoff time.Time) error
+	RedactWaActivityBefore(ctx context.Context, cutoff time.Time) error
 }
 
 var _ Querier = (*Queries)(nil)
