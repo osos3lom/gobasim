@@ -1,0 +1,11 @@
+{
+  "name": "sawt-dashboard-assets",
+  "private": true,
+  "description": "Tailwind CSS build for web/templates — the operator dashboard. Output is committed to web/static/app.css so the Go build/deploy stays Node-free.",
+  "scripts": {
+    "build:css": "tailwindcss -i ./web/static/src/input.css -o ./web/static/app.css --minify"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.0"
+  }
+}

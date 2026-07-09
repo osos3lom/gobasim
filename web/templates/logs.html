@@ -1,4 +1,6 @@
-{{define "content"}}
+{{template "layout" .}}
+
+{{define "logs-content"}}
 <div class="space-y-6 flex flex-col h-[calc(100vh-140px)]">
 
     <!-- Terminal Header Info -->
@@ -71,21 +73,4 @@
         logWindow.innerHTML = '<div class="text-gray-500 select-none">// Terminal cleared. Listening...</div>';
     });
 </script>
-
-<style>
-    /* Styling scrollbar for terminal */
-    .scrollbar::-webkit-scrollbar {
-        width: 6px;
-    }
-    .scrollbar::-webkit-scrollbar-track {
-        background: rgba(0,0,0,0.1);
-    }
-    .scrollbar::-webkit-scrollbar-thumb {
-        background: rgba(99, 102, 241, 0.2);
-        border-radius: 4px;
-    }
-    .scrollbar::-webkit-scrollbar-thumb:hover {
-        background: rgba(99, 102, 241, 0.4);
-    }
-</style>
 {{end}}

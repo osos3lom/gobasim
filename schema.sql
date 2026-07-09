@@ -82,7 +82,6 @@ CREATE TABLE IF NOT EXISTS wa_contacts (
     enabled BOOLEAN NOT NULL DEFAULT FALSE,
     agent_id TEXT,
     prompt_override TEXT,
-    contact_type TEXT NOT NULL DEFAULT 'viewer',
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -134,11 +133,53 @@ CREATE TABLE IF NOT EXISTS pending_confirmations (
     expires_at TIMESTAMPTZ NOT NULL
 );
 
+-- Message-browsing store for the dashboard's Messages tab: every message
+-- sent/received while this instance is running, distinct from wa_activity
+-- (metrics/audit log) and conversation_turns (LLM prompt context, gets
+-- summarized/pruned). Not backfilled from WhatsApp — whatsmeow has no
+-- history-fetch API, so this only ever grows as real-time events occur.
+CREATE TABLE IF NOT EXISTS wa_messages (
+    id TEXT PRIMARY KEY,           -- WhatsApp message id, or "wamsg_"+hex for operator sends
+    seq BIGSERIAL,                 -- pagination cursor (id is TEXT/non-chronological, can't cursor on it)
+    chat_id TEXT NOT NULL,
+    direction TEXT NOT NULL,       -- 'in' | 'out'
+    sender TEXT NOT NULL,          -- 'contact' | 'bot' | 'operator'
+    msg_type TEXT NOT NULL DEFAULT 'text', -- 'text' | 'voice'
+    content TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'sent',   -- 'sent' | 'delivered' | 'failed'
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Voice-note archive ledger: one row per stored voice note, both directions.
+-- The audio bytes live in Firebase Cloud Storage (a GCS bucket); this table
+-- holds metadata plus upload state so failed uploads can be retried safely
+-- (spool file on disk + status='pending' rows are the recovery source).
+-- Object deletion is handled by a bucket lifecycle rule matching
+-- RETENTION_DAYS; rows here are purged by the daily retention job.
+CREATE TABLE IF NOT EXISTS wa_voice_notes (
+    id TEXT PRIMARY KEY,                       -- WhatsApp message id + '-in'/'-out'
+    chat_id TEXT NOT NULL,
+    direction TEXT NOT NULL,                   -- 'in' | 'out'
+    sender TEXT NOT NULL DEFAULT '',
+    receiver TEXT NOT NULL DEFAULT '',
+    object_path TEXT NOT NULL,                 -- bucket-relative object name
+    mime_type TEXT NOT NULL DEFAULT 'audio/ogg',
+    size_bytes BIGINT NOT NULL DEFAULT 0,
+    duration_seconds INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'pending',    -- 'pending' | 'uploaded' | 'failed'
+    attempts INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_error TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    uploaded_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_wa_voice_notes_pending ON wa_voice_notes (status, next_attempt_at);
+CREATE INDEX IF NOT EXISTS idx_wa_voice_notes_chat ON wa_voice_notes (chat_id, created_at DESC);
+
 CREATE INDEX IF NOT EXISTS idx_conversation_turns_chat_id ON conversation_turns (chat_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_tts_history_ts ON tts_history (ts DESC);
 CREATE INDEX IF NOT EXISTS idx_stt_history_ts ON stt_history (ts DESC);
 CREATE INDEX IF NOT EXISTS idx_wa_contacts_updated ON wa_contacts (updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_wa_activity_ts ON wa_activity (ts DESC);
-
--- Idempotent column addition for existing tables
-ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS contact_type TEXT NOT NULL DEFAULT 'viewer';
+CREATE INDEX IF NOT EXISTS idx_wa_messages_chat_seq ON wa_messages (chat_id, seq DESC);

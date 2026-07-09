@@ -22,6 +22,29 @@ type fakeQuerier struct {
 	state    database.ConversationState
 	hasState bool
 	nextID   int64
+
+	// Optional contact/agent config for max_history (D2) tests. When unset,
+	// lookups return "no rows" and the default turn limit applies.
+	contact *database.WaContact
+	agent   *database.Agent
+}
+
+func (f *fakeQuerier) GetWaContact(ctx context.Context, chatID string) (database.WaContact, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.contact == nil {
+		return database.WaContact{}, fmt.Errorf("no rows")
+	}
+	return *f.contact, nil
+}
+
+func (f *fakeQuerier) GetAgent(ctx context.Context, id string) (database.Agent, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.agent == nil || f.agent.ID != id {
+		return database.Agent{}, fmt.Errorf("no rows")
+	}
+	return *f.agent, nil
 }
 
 func (f *fakeQuerier) CreateConversationTurn(ctx context.Context, arg database.CreateConversationTurnParams) (database.ConversationTurn, error) {
@@ -95,12 +118,51 @@ func TestLoadConversationReturnsRecentTurns(t *testing.T) {
 	if summary != "" {
 		t.Fatalf("expected empty summary for fresh chat, got %q", summary)
 	}
-	if len(msgs) != maxRecentTurns {
-		t.Fatalf("expected %d recent turns, got %d", maxRecentTurns, len(msgs))
+	if len(msgs) != defaultRecentTurns {
+		t.Fatalf("expected %d recent turns, got %d", defaultRecentTurns, len(msgs))
 	}
 	// Should be the LAST 8 turns (5..12), in order.
 	if msgs[0].Content != "turn 5" || msgs[len(msgs)-1].Content != "turn 12" {
 		t.Fatalf("expected turns 5..12, got first=%q last=%q", msgs[0].Content, msgs[len(msgs)-1].Content)
+	}
+}
+
+// D2 regression: the assigned agent's max_history drives replay depth,
+// clamped so a misconfigured agent cannot blow up prompt size.
+func TestLoadConversationHonorsAgentMaxHistory(t *testing.T) {
+	agentID := "agent_test"
+	tests := []struct {
+		name       string
+		maxHistory int32
+		seeded     int
+		wantTurns  int
+	}{
+		{"agent limit below default", 4, 12, 4},
+		{"agent limit above cap is clamped", 999, 30, maxRecentTurnsCap},
+		{"zero max_history falls back to default", 0, 12, defaultRecentTurns},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q := &fakeQuerier{
+				contact: &database.WaContact{ChatID: "chat1", AgentID: &agentID, Enabled: true},
+				agent:   &database.Agent{ID: agentID, MaxHistory: tt.maxHistory},
+			}
+			seedTurns(q, "chat1", tt.seeded)
+			e := newMemoryTestEngine(q, nil)
+
+			_, msgs, err := e.LoadConversation(context.Background(), "chat1")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(msgs) != tt.wantTurns {
+				t.Fatalf("expected %d turns, got %d", tt.wantTurns, len(msgs))
+			}
+			// Always the most recent turns, in order.
+			wantLast := fmt.Sprintf("turn %d", tt.seeded)
+			if msgs[len(msgs)-1].Content != wantLast {
+				t.Fatalf("expected last turn %q, got %q", wantLast, msgs[len(msgs)-1].Content)
+			}
+		})
 	}
 }
 

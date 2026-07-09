@@ -17,6 +17,7 @@ type Querier interface {
 	CreateWebhookLog(ctx context.Context, arg CreateWebhookLogParams) error
 	GetAgent(ctx context.Context, id string) (Agent, error)
 	ListAgents(ctx context.Context) ([]Agent, error)
+	ListPublishedAgents(ctx context.Context) ([]Agent, error)
 	CreateAgent(ctx context.Context, arg CreateAgentParams) (Agent, error)
 	UpdateAgentWorkflow(ctx context.Context, arg UpdateAgentWorkflowParams) (Agent, error)
 	GetWaContact(ctx context.Context, chatID string) (WaContact, error)
@@ -25,6 +26,10 @@ type Querier interface {
 	ListWaContacts(ctx context.Context) ([]WaContact, error)
 	CreateWaActivity(ctx context.Context, arg CreateWaActivityParams) error
 	ListRecentWaActivity(ctx context.Context, limit int32) ([]WaActivity, error)
+	CreateWaMessage(ctx context.Context, arg CreateWaMessageParams) error
+	ListWaMessagesByChat(ctx context.Context, arg ListWaMessagesByChatParams) ([]WaMessage, error)
+	ListWaChatsSummary(ctx context.Context) ([]WaChatSummary, error)
+	RedactWaMessagesBefore(ctx context.Context, cutoff time.Time) error
 	CreateConversationTurn(ctx context.Context, arg CreateConversationTurnParams) (ConversationTurn, error)
 	ListConversationTurnsAfter(ctx context.Context, arg ListConversationTurnsAfterParams) ([]ConversationTurn, error)
 	GetConversationState(ctx context.Context, chatID string) (ConversationState, error)

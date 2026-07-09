@@ -86,7 +86,6 @@ type WaContact struct {
 	Enabled        bool      `json:"enabled"`
 	AgentID        *string   `json:"agent_id"`
 	PromptOverride *string   `json:"prompt_override"`
-	ContactType    string    `json:"contact_type"`
 	UpdatedAt      time.Time `json:"updated_at"`
 }
 
@@ -136,4 +135,27 @@ type WaActivity struct {
 	TotalMs     int32     `json:"total_ms"`
 	Status      string    `json:"status"`
 	Error       *string   `json:"error"`
+}
+
+type WaMessage struct {
+	ID        string    `json:"id"`
+	Seq       int64     `json:"seq"`
+	ChatID    string    `json:"chat_id"`
+	Direction string    `json:"direction"`
+	Sender    string    `json:"sender"`
+	MsgType   string    `json:"msg_type"`
+	Content   string    `json:"content"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type WaChatSummary struct {
+	ChatID         string    `json:"chat_id"`
+	LastMessage    string    `json:"last_message"`
+	LastDirection  string    `json:"last_direction"`
+	LastSender     string    `json:"last_sender"`
+	LastMessageAt  time.Time `json:"last_message_at"`
+	ContactName    *string   `json:"contact_name"`
+	ContactEnabled *bool     `json:"contact_enabled"`
+	ContactAgentID *string   `json:"contact_agent_id"`
 }

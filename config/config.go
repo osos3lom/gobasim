@@ -33,6 +33,12 @@ type Config struct {
 	LlmFallbackModel   string
 	ErrorWebhookURL    string
 	RetentionDays      int
+
+	// Voice-note archival to Firebase Cloud Storage (a GCS bucket).
+	// Empty VoiceStorageBucket disables the feature entirely.
+	VoiceStorageBucket string
+	VoiceStoragePrefix string
+	VoiceSpoolDir      string
 }
 
 func LoadConfig() *Config {
@@ -76,8 +82,17 @@ func LoadConfig() *Config {
 		ttsProvider = "google"
 	}
 
+	secureCookie, _ := strconv.ParseBool(os.Getenv("SECURE_COOKIE"))
+
 	sessionSecret := os.Getenv("SESSION_SECRET")
 	if sessionSecret == "" {
+		// SECURE_COOKIE=true is the production signal (HTTPS deployment).
+		// Running production with an ephemeral per-boot secret would silently
+		// log every operator out on each restart and is almost certainly a
+		// deployment mistake — fail fast instead of limping along.
+		if secureCookie {
+			log.Fatal("FATAL: SESSION_SECRET must be set when SECURE_COOKIE=true (production). Generate one with: openssl rand -hex 32")
+		}
 		log.Println("WARNING: SESSION_SECRET env var is not set. Generating a random key for this run. Users will be logged out on server restart.")
 		bytes := make([]byte, 32)
 		if _, err := rand.Read(bytes); err != nil {
@@ -86,8 +101,6 @@ func LoadConfig() *Config {
 			sessionSecret = hex.EncodeToString(bytes)
 		}
 	}
-
-	secureCookie, _ := strconv.ParseBool(os.Getenv("SECURE_COOKIE"))
 
 	llmFallbackModel := os.Getenv("LLM_FALLBACK_MODEL")
 	if llmFallbackModel == "" {
@@ -119,7 +132,17 @@ func LoadConfig() *Config {
 		LlmFallbackModel:   llmFallbackModel,
 		ErrorWebhookURL:    os.Getenv("ERROR_WEBHOOK_URL"),
 		RetentionDays:      GetEnvInt("RETENTION_DAYS", 90),
+		VoiceStorageBucket: os.Getenv("VOICE_STORAGE_BUCKET"),
+		VoiceStoragePrefix: getEnvDefault("VOICE_STORAGE_PREFIX", "voice-notes"),
+		VoiceSpoolDir:      getEnvDefault("VOICE_SPOOL_DIR", "voice-spool"),
 	}
+}
+
+func getEnvDefault(key, defaultVal string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return defaultVal
 }
 
 func GetEnvInt(key string, defaultVal int) int {

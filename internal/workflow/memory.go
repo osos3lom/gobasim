@@ -10,8 +10,12 @@ import (
 )
 
 const (
-	// maxRecentTurns is how many stored turns are replayed into the LLM context.
-	maxRecentTurns = 8
+	// defaultRecentTurns is how many stored turns are replayed into the LLM
+	// context when the chat's agent has no max_history configured (D2).
+	defaultRecentTurns = 8
+	// maxRecentTurnsCap bounds agent-configured max_history so a misconfigured
+	// agent cannot grow LLM prompts (and memory) without limit on a 1 GB host.
+	maxRecentTurnsCap = 20
 	// summarizeThreshold is the number of unsummarized turns that triggers a
 	// rolling-summary pass.
 	summarizeThreshold = 20
@@ -44,8 +48,9 @@ func (e *WorkflowEngine) LoadConversation(ctx context.Context, chatID string) (s
 		return convState.Summary, nil, fmt.Errorf("failed to load conversation turns: %w", err)
 	}
 
-	if len(turns) > maxRecentTurns {
-		turns = turns[len(turns)-maxRecentTurns:]
+	limit := e.conversationTurnLimit(ctx, chatID)
+	if len(turns) > limit {
+		turns = turns[len(turns)-limit:]
 	}
 
 	messages := make([]Message, 0, len(turns))
@@ -53,6 +58,26 @@ func (e *WorkflowEngine) LoadConversation(ctx context.Context, chatID string) (s
 		messages = append(messages, Message{Role: t.Role, Content: t.Content})
 	}
 	return convState.Summary, messages, nil
+}
+
+// conversationTurnLimit resolves how many stored turns to replay for a chat:
+// the assigned agent's max_history when set (capped at maxRecentTurnsCap),
+// otherwise defaultRecentTurns. Lookup failures fall back silently — memory
+// depth must never break the reply path.
+func (e *WorkflowEngine) conversationTurnLimit(ctx context.Context, chatID string) int {
+	contact, err := e.queries.GetWaContact(ctx, chatID)
+	if err != nil || contact.AgentID == nil || *contact.AgentID == "" {
+		return defaultRecentTurns
+	}
+	agent, err := e.queries.GetAgent(ctx, *contact.AgentID)
+	if err != nil || agent.MaxHistory <= 0 {
+		return defaultRecentTurns
+	}
+	limit := int(agent.MaxHistory)
+	if limit > maxRecentTurnsCap {
+		limit = maxRecentTurnsCap
+	}
+	return limit
 }
 
 // SaveTurns persists the user/assistant exchange and, when enough turns have

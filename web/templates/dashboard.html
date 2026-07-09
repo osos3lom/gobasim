@@ -1,55 +1,43 @@
-{{if .Partial}}
-  {{template "whatsapp_card" .}}
-{{else}}
-  {{template "layout" .}}
-{{end}}
+{{template "layout" .}}
 
-{{define "content"}}
+{{define "dashboard-content"}}
 <div class="space-y-8">
 
-    <!-- WhatsApp Pairing and Metrics Layout -->
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <!-- WhatsApp Pairing Card (Left 2 cols) -->
-        <div class="lg:col-span-2">
-            {{template "whatsapp_card" .}}
+    <!-- System Quick metrics -->
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <!-- Metric 1 -->
+        <div class="glass p-4 rounded-xl flex items-center justify-between border border-indigo-950/40">
+            <div>
+                <span class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Memory Mode</span>
+                <h3 class="text-sm font-bold text-white mt-0.5">Pool (Stateless)</h3>
+            </div>
+            <div class="p-2 bg-indigo-500/10 text-indigo-400 rounded-lg">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+            </div>
         </div>
-
-        <!-- System Quick metrics (Right 1 col) -->
-        <div class="grid grid-cols-1 gap-4">
-            <!-- Metric 1 -->
-            <div class="glass p-4 rounded-xl flex items-center justify-between border border-indigo-950/40">
-                <div>
-                    <span class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Memory Mode</span>
-                    <h3 class="text-sm font-bold text-white mt-0.5">Pool (Stateless)</h3>
-                </div>
-                <div class="p-2 bg-indigo-500/10 text-indigo-400 rounded-lg">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
-                </div>
+        <!-- Metric 2 -->
+        <div class="glass p-4 rounded-xl flex items-center justify-between border border-indigo-950/40">
+            <div>
+                <span class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Database Node</span>
+                <h3 class="text-sm font-bold text-white mt-0.5">Neon Serverless</h3>
             </div>
-            <!-- Metric 2 -->
-            <div class="glass p-4 rounded-xl flex items-center justify-between border border-indigo-950/40">
-                <div>
-                    <span class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Database Node</span>
-                    <h3 class="text-sm font-bold text-white mt-0.5">Neon Serverless</h3>
-                </div>
-                <div class="p-2 bg-cyan-500/10 text-cyan-400 rounded-lg">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.58 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.58 4 8 4s8-1.79 8-4M4 7c0-2.21 3.58-4 8-4s8 1.79 8 4m0 5c0 2.21-3.58 4-8 4s-8-1.79-8-4"></path></svg>
-                </div>
+            <div class="p-2 bg-cyan-500/10 text-cyan-400 rounded-lg">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.58 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.58 4 8 4s8-1.79 8-4M4 7c0-2.21 3.58-4 8-4s8 1.79 8 4m0 5c0 2.21-3.58 4-8 4s-8-1.79-8-4"></path></svg>
             </div>
-            <!-- Metric 3 -->
-            <div class="glass p-4 rounded-xl flex items-center justify-between border border-indigo-950/40">
-                <div>
-                    <span class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">ASR/TTS Latency</span>
-                    <h3 class="text-sm font-bold text-white mt-0.5">Free Tier Fallback</h3>
-                </div>
-                <div class="p-2 bg-pink-500/10 text-pink-400 rounded-lg">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                </div>
+        </div>
+        <!-- Metric 3 -->
+        <div class="glass p-4 rounded-xl flex items-center justify-between border border-indigo-950/40">
+            <div>
+                <span class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">ASR/TTS Latency</span>
+                <h3 class="text-sm font-bold text-white mt-0.5">Free Tier Fallback</h3>
+            </div>
+            <div class="p-2 bg-pink-500/10 text-pink-400 rounded-lg">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
             </div>
         </div>
     </div>
 
-    <!-- Active Contacts and Recent Actions split -->
+    <!-- WhatsApp status + Recent Actions split -->
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <!-- Recent Activities (Left 2 cols) -->
         <div class="glass rounded-2xl border border-indigo-950/40 lg:col-span-2 overflow-hidden flex flex-col">
@@ -121,139 +109,25 @@
             </div>
         </div>
 
-        <!-- WhatsApp Contacts list (Right 1 col) -->
-        <div class="glass rounded-2xl border border-indigo-950/40 overflow-hidden flex flex-col h-[500px]">
-            <div class="p-6 border-b border-indigo-950/50 shrink-0">
-                <h3 class="font-bold text-white text-lg">Mapped WhatsApp Contacts</h3>
-            </div>
-            <div class="p-4 overflow-y-auto flex-1 space-y-4">
-                {{range .Contacts}}
-                <div class="p-3 bg-slate-950/20 border border-indigo-950/40 rounded-xl space-y-3">
-                    <form hx-post="/dashboard/contacts/update" hx-swap="none" class="space-y-3">
-                        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-                        <input type="hidden" name="chat_id" value="{{.ChatID}}">
-                        
-                        <div class="flex justify-between items-start">
-                            <div>
-                                <div class="font-semibold text-white text-sm">{{.Name}}</div>
-                                <div class="text-[10px] text-gray-400 mt-0.5">{{.ChatID}}</div>
-                            </div>
-                            
-                            <!-- Enabled Toggle -->
-                            <label class="relative inline-flex items-center cursor-pointer">
-                                <input type="checkbox" name="enabled" value="true" class="sr-only peer" {{if .Enabled}}checked{{end}} onchange="this.form.dispatchEvent(new Event('submit'))">
-                                <div class="w-9 h-5 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
-                            </label>
-                        </div>
-                        
-                        <div class="grid grid-cols-2 gap-2 text-[10px]">
-                            <!-- AI Agent Select -->
-                            <div>
-                                <label class="block text-gray-400 mb-1">AI Agent</label>
-                                <select name="agent_id" onchange="this.form.dispatchEvent(new Event('submit'))"
-                                        class="w-full bg-slate-950 border border-indigo-950 focus:border-indigo-500 rounded-lg p-1 text-white outline-none">
-                                    <option value="default" {{if or (not .AgentID) (eq *.AgentID "default")}}selected{{end}}>Default (Operations)</option>
-                                    <option value="operations" {{if and .AgentID (eq *.AgentID "operations")}}selected{{end}}>Operations</option>
-                                    <option value="accounting" {{if and .AgentID (eq *.AgentID "accounting")}}selected{{end}}>Accounting</option>
-                                    <option value="administration" {{if and .AgentID (eq *.AgentID "administration")}}selected{{end}}>Administration</option>
-                                    <option value="sales" {{if and .AgentID (eq *.AgentID "sales")}}selected{{end}}>Sales</option>
-                                    <option value="breeding" {{if and .AgentID (eq *.AgentID "breeding")}}selected{{end}}>Breeding</option>
-                                    <option value="client" {{if and .AgentID (eq *.AgentID "client")}}selected{{end}}>Client Self-Service</option>
-                                </select>
-                            </div>
-                            
-                            <!-- Contact Type (Role) Select -->
-                            <div>
-                                <label class="block text-gray-400 mb-1">Contact Type</label>
-                                <select name="contact_type" onchange="this.form.dispatchEvent(new Event('submit'))"
-                                        class="w-full bg-slate-950 border border-indigo-950 focus:border-indigo-500 rounded-lg p-1 text-white outline-none">
-                                    <option value="client" {{if eq .ContactType "client"}}selected{{end}}>Client</option>
-                                    <option value="viewer" {{if or (not .ContactType) (eq .ContactType "viewer")}}selected{{end}}>Viewer</option>
-                                    <option value="manager" {{if eq .ContactType "manager"}}selected{{end}}>Manager</option>
-                                    <option value="admin" {{if eq .ContactType "admin"}}selected{{end}}>Admin</option>
-                                    <option value="super_admin" {{if eq .ContactType "super_admin"}}selected{{end}}>Super Admin</option>
-                                </select>
-                            </div>
-                        </div>
-                    </form>
-                </div>
+        <!-- WhatsApp Gateway status (Right 1 col) -->
+        <a href="/dashboard/whatsapp" class="glass rounded-2xl border border-indigo-950/40 overflow-hidden flex flex-col hover:border-indigo-800 transition duration-200">
+            <div class="p-6 border-b border-indigo-950/50 shrink-0 flex items-center justify-between">
+                <h3 class="font-bold text-white text-lg">WhatsApp Gateway</h3>
+                {{if eq .WAStatus "connected"}}
+                <span class="text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-900 px-2 py-0.5 rounded-full font-bold flex items-center">
+                    <span class="h-1.5 w-1.5 rounded-full bg-emerald-400 mr-1.5 animate-pulse"></span> Connected
+                </span>
                 {{else}}
-                <div class="text-center text-gray-400 text-sm py-8">
-                    No contacts mapped. Enabled numbers will appear here.
-                </div>
+                <span class="text-[10px] bg-red-950 text-red-400 border border-red-900 px-2 py-0.5 rounded-full font-bold flex items-center">
+                    <span class="h-1.5 w-1.5 rounded-full bg-red-400 mr-1.5"></span> Disconnected
+                </span>
                 {{end}}
+            </div>
+            <div class="p-6 flex-1 flex items-center">
+                <p class="text-sm text-gray-400">Manage pairing, contacts, and two-way messaging &rarr;</p>
+            </div>
+        </a>
     </div>
 
-</div>
-{{end}}
-
-{{define "whatsapp_card"}}
-<div id="whatsapp-pairing-card" class="glass p-6 rounded-2xl border border-indigo-950/40 relative space-y-6"
-     {{if ne .WAStatus "connected"}}hx-get="/dashboard/whatsapp/status" hx-trigger="every 5s" hx-swap="outerHTML"{{end}}>
-    
-    <div class="flex items-center justify-between border-b border-indigo-950/50 pb-4">
-        <div>
-            <h3 class="font-bold text-white text-lg">WhatsApp Linking</h3>
-            <span class="text-xs text-gray-400">Connect Sawt daemon directly to your phone.</span>
-        </div>
-        <div>
-            {{if eq .WAStatus "connected"}}
-            <span class="text-xs bg-emerald-950 text-emerald-400 border border-emerald-900 px-3 py-1 rounded-full font-bold flex items-center">
-                <span class="h-2 w-2 rounded-full bg-emerald-400 mr-2 animate-pulse"></span> Connected
-            </span>
-            {{else if eq .WAStatus "qr_ready"}}
-            <span class="text-xs bg-amber-950 text-amber-400 border border-amber-900 px-3 py-1 rounded-full font-bold flex items-center">
-                <span class="h-2 w-2 rounded-full bg-amber-400 mr-2 animate-ping"></span> QR Code Ready
-            </span>
-            {{else if eq .WAStatus "pairing_ready"}}
-            <span class="text-xs bg-indigo-950 text-indigo-400 border border-indigo-900 px-3 py-1 rounded-full font-bold flex items-center">
-                <span class="h-2 w-2 rounded-full bg-indigo-400 mr-2 animate-pulse"></span> Code Generated
-            </span>
-            {{else}}
-            <span class="text-xs bg-red-950 text-red-400 border border-red-900 px-3 py-1 rounded-full font-bold flex items-center">
-                <span class="h-2 w-2 rounded-full bg-red-400 mr-2"></span> Disconnected
-            </span>
-            {{end}}
-        </div>
-    </div>
-
-    <!-- Status Content -->
-    {{if eq .WAStatus "connected"}}
-    <div class="text-gray-300 text-sm leading-relaxed">
-        🤖 Sawt is linked and running on WhatsApp. Voice notes received will be processed using Whisper STT, executed against the ERP toolpacks, and responded to using SILMA TTS audio.
-    </div>
-    {{else if eq .WAStatus "qr_ready"}}
-    <div class="space-y-4 text-center">
-        <p class="text-sm text-gray-300">Scan this QR code from your phone's WhatsApp linked devices screen:</p>
-        <canvas id="qr-code-canvas" class="mx-auto block p-2 bg-white rounded-xl shadow-inner border border-gray-700"></canvas>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js"></script>
-        <script>
-            new QRious({
-                element: document.getElementById('qr-code-canvas'),
-                value: '{{.WAQR}}',
-                size: 200
-            });
-        </script>
-    </div>
-    {{else if eq .WAStatus "pairing_ready"}}
-    <div class="space-y-4 text-center">
-        <p class="text-sm text-gray-300">Go to Linked Devices -> Link with phone number instead on your phone, and enter this code:</p>
-        <div class="text-3xl font-mono font-bold tracking-widest text-indigo-400 bg-indigo-950/40 border border-indigo-900/60 rounded-xl py-4 inline-block px-8">
-            {{.WAPair}}
-        </div>
-    </div>
-    {{else}}
-    <div class="space-y-4">
-        <p class="text-sm text-gray-300">Link WhatsApp by requesting an 8-character pairing code directly to your phone:</p>
-        <form hx-post="/dashboard/whatsapp/pair-code" hx-target="#whatsapp-pairing-card" hx-swap="outerHTML" class="flex gap-2">
-            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-            <input type="text" name="phone" placeholder="9665xxxxxxxx (country code first)" required
-                   class="flex-1 bg-slate-950/60 border border-indigo-950 focus:border-indigo-500 rounded-xl px-4 py-2.5 text-sm text-white outline-none transition duration-200">
-            <button type="submit" class="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl transition duration-200 active:scale-95">
-                Generate Code
-            </button>
-        </form>
-    </div>
-    {{end}}
 </div>
 {{end}}

@@ -324,6 +324,57 @@ func (q *Queries) ListAgents(ctx context.Context) ([]Agent, error) {
 	return items, nil
 }
 
+// -- ListPublishedAgents --
+const listPublishedAgents = `-- name: ListPublishedAgents :many
+SELECT id, name, project_id, hosting_region, status, last_edited, last_published, template, system_prompt, greeting_message, failure_message, model_type, asr, llm, tts, turn_detection, start_of_speech, end_of_speech, selective_attention_locking, filler_words, max_history, mcp_servers, skills FROM agents
+WHERE status = 'published'
+ORDER BY name
+`
+
+func (q *Queries) ListPublishedAgents(ctx context.Context) ([]Agent, error) {
+	rows, err := q.db.Query(ctx, listPublishedAgents)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Agent
+	for rows.Next() {
+		var i Agent
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.ProjectID,
+			&i.HostingRegion,
+			&i.Status,
+			&i.LastEdited,
+			&i.LastPublished,
+			&i.Template,
+			&i.SystemPrompt,
+			&i.GreetingMessage,
+			&i.FailureMessage,
+			&i.ModelType,
+			&i.Asr,
+			&i.Llm,
+			&i.Tts,
+			&i.TurnDetection,
+			&i.StartOfSpeech,
+			&i.EndOfSpeech,
+			&i.SelectiveAttentionLocking,
+			&i.FillerWords,
+			&i.MaxHistory,
+			&i.McpServers,
+			&i.Skills,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 // -- CreateAgent --
 type CreateAgentParams struct {
 	ID                        string     `json:"id"`
@@ -402,7 +453,9 @@ type UpdateAgentWorkflowParams struct {
 const updateAgentWorkflow = `-- name: UpdateAgentWorkflow :one
 UPDATE agents
 SET name = $2, system_prompt = $3, greeting_message = $4, failure_message = $5,
-    asr = $6, llm = $7, tts = $8, max_history = $9, status = $10, last_edited = NOW()
+    asr = $6, llm = $7, tts = $8, max_history = $9,
+    last_published = CASE WHEN $10::text = 'published' AND status <> 'published' THEN NOW() ELSE last_published END,
+    status = $10, last_edited = NOW()
 WHERE id = $1
 RETURNING id, name, project_id, hosting_region, status, last_edited, last_published, template, system_prompt, greeting_message, failure_message, model_type, asr, llm, tts, turn_detection, start_of_speech, end_of_speech, selective_attention_locking, filler_words, max_history, mcp_servers, skills
 `
@@ -425,7 +478,7 @@ func (q *Queries) UpdateAgentWorkflow(ctx context.Context, arg UpdateAgentWorkfl
 
 // -- GetWaContact --
 const getWaContact = `-- name: GetWaContact :one
-SELECT chat_id, name, enabled, agent_id, prompt_override, contact_type, updated_at FROM wa_contacts
+SELECT chat_id, name, enabled, agent_id, prompt_override, updated_at FROM wa_contacts
 WHERE chat_id = $1 LIMIT 1
 `
 
@@ -438,7 +491,6 @@ func (q *Queries) GetWaContact(ctx context.Context, chatID string) (WaContact, e
 		&i.Enabled,
 		&i.AgentID,
 		&i.PromptOverride,
-		&i.ContactType,
 		&i.UpdatedAt,
 	)
 	return i, err
@@ -451,16 +503,15 @@ type CreateOrUpdateWaContactParams struct {
 	Enabled        bool    `json:"enabled"`
 	AgentID        *string `json:"agent_id"`
 	PromptOverride *string `json:"prompt_override"`
-	ContactType    string  `json:"contact_type"`
 }
 
 const createOrUpdateWaContact = `-- name: CreateOrUpdateWaContact :one
-INSERT INTO wa_contacts (chat_id, name, enabled, agent_id, prompt_override, contact_type, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, NOW())
+INSERT INTO wa_contacts (chat_id, name, enabled, agent_id, prompt_override, updated_at)
+VALUES ($1, $2, $3, $4, $5, NOW())
 ON CONFLICT (chat_id) DO UPDATE
-SET name = EXCLUDED.name, enabled = EXCLUDED.enabled, agent_id = EXCLUDED.agent_id, 
-    prompt_override = EXCLUDED.prompt_override, contact_type = EXCLUDED.contact_type, updated_at = NOW()
-RETURNING chat_id, name, enabled, agent_id, prompt_override, contact_type, updated_at
+SET name = EXCLUDED.name, enabled = EXCLUDED.enabled, agent_id = EXCLUDED.agent_id,
+    prompt_override = EXCLUDED.prompt_override, updated_at = NOW()
+RETURNING chat_id, name, enabled, agent_id, prompt_override, updated_at
 `
 
 func (q *Queries) CreateOrUpdateWaContact(ctx context.Context, arg CreateOrUpdateWaContactParams) (WaContact, error) {
@@ -470,7 +521,6 @@ func (q *Queries) CreateOrUpdateWaContact(ctx context.Context, arg CreateOrUpdat
 		arg.Enabled,
 		arg.AgentID,
 		arg.PromptOverride,
-		arg.ContactType,
 	)
 	var i WaContact
 	err := row.Scan(
@@ -479,7 +529,6 @@ func (q *Queries) CreateOrUpdateWaContact(ctx context.Context, arg CreateOrUpdat
 		&i.Enabled,
 		&i.AgentID,
 		&i.PromptOverride,
-		&i.ContactType,
 		&i.UpdatedAt,
 	)
 	return i, err
@@ -487,17 +536,16 @@ func (q *Queries) CreateOrUpdateWaContact(ctx context.Context, arg CreateOrUpdat
 
 // -- UpdateWaContactSettings --
 type UpdateWaContactSettingsParams struct {
-	ChatID      string  `json:"chat_id"`
-	Enabled     bool    `json:"enabled"`
-	AgentID     *string `json:"agent_id"`
-	ContactType string  `json:"contact_type"`
+	ChatID  string  `json:"chat_id"`
+	Enabled bool    `json:"enabled"`
+	AgentID *string `json:"agent_id"`
 }
 
 const updateWaContactSettings = `-- name: UpdateWaContactSettings :one
 UPDATE wa_contacts
-SET enabled = $2, agent_id = $3, contact_type = $4, updated_at = NOW()
+SET enabled = $2, agent_id = $3, updated_at = NOW()
 WHERE chat_id = $1
-RETURNING chat_id, name, enabled, agent_id, prompt_override, contact_type, updated_at
+RETURNING chat_id, name, enabled, agent_id, prompt_override, updated_at
 `
 
 func (q *Queries) UpdateWaContactSettings(ctx context.Context, arg UpdateWaContactSettingsParams) (WaContact, error) {
@@ -505,7 +553,6 @@ func (q *Queries) UpdateWaContactSettings(ctx context.Context, arg UpdateWaConta
 		arg.ChatID,
 		arg.Enabled,
 		arg.AgentID,
-		arg.ContactType,
 	)
 	var i WaContact
 	err := row.Scan(
@@ -514,7 +561,6 @@ func (q *Queries) UpdateWaContactSettings(ctx context.Context, arg UpdateWaConta
 		&i.Enabled,
 		&i.AgentID,
 		&i.PromptOverride,
-		&i.ContactType,
 		&i.UpdatedAt,
 	)
 	return i, err
@@ -522,7 +568,7 @@ func (q *Queries) UpdateWaContactSettings(ctx context.Context, arg UpdateWaConta
 
 // -- ListWaContacts --
 const listWaContacts = `-- name: ListWaContacts :many
-SELECT chat_id, name, enabled, agent_id, prompt_override, contact_type, updated_at FROM wa_contacts
+SELECT chat_id, name, enabled, agent_id, prompt_override, updated_at FROM wa_contacts
 ORDER BY updated_at DESC
 `
 
@@ -541,7 +587,6 @@ func (q *Queries) ListWaContacts(ctx context.Context) ([]WaContact, error) {
 			&i.Enabled,
 			&i.AgentID,
 			&i.PromptOverride,
-			&i.ContactType,
 			&i.UpdatedAt,
 		); err != nil {
 			return nil, err

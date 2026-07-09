@@ -3,7 +3,7 @@
 # Produces ./sawt-gateway — a linux/amd64 binary ready to scp to the e2-micro VM.
 set -euo pipefail
 
-command -v go >/dev/null || { echo "Go not found. Install it first (see docs/LOCAL-DEV-TESTING.md)."; exit 1; }
+command -v go >/dev/null || { echo "Go not found. Install it first (see docs/DEPLOYMENT.md)."; exit 1; }
 
 echo "go vet ..."
 go vet ./...

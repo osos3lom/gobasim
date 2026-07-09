@@ -44,6 +44,11 @@ WHERE id = $1 LIMIT 1;
 SELECT * FROM agents
 ORDER BY name;
 
+-- name: ListPublishedAgents :many
+SELECT * FROM agents
+WHERE status = 'published'
+ORDER BY name;
+
 -- name: CreateAgent :one
 INSERT INTO agents (
     id, name, project_id, hosting_region, status, last_edited, 
@@ -60,9 +65,13 @@ INSERT INTO agents (
 ) RETURNING *;
 
 -- name: UpdateAgentWorkflow :one
+-- last_published is stamped only on the draft->published transition (D4);
+-- the CASE reads the pre-update status, per UPDATE..SET semantics.
 UPDATE agents
 SET name = $2, system_prompt = $3, greeting_message = $4, failure_message = $5,
-    asr = $6, llm = $7, tts = $8, max_history = $9, status = $10, last_edited = NOW()
+    asr = $6, llm = $7, tts = $8, max_history = $9,
+    last_published = CASE WHEN $10::text = 'published' AND status <> 'published' THEN NOW() ELSE last_published END,
+    status = $10, last_edited = NOW()
 WHERE id = $1
 RETURNING *;
 
@@ -71,16 +80,16 @@ SELECT * FROM wa_contacts
 WHERE chat_id = $1 LIMIT 1;
 
 -- name: CreateOrUpdateWaContact :one
-INSERT INTO wa_contacts (chat_id, name, enabled, agent_id, prompt_override, contact_type, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, NOW())
+INSERT INTO wa_contacts (chat_id, name, enabled, agent_id, prompt_override, updated_at)
+VALUES ($1, $2, $3, $4, $5, NOW())
 ON CONFLICT (chat_id) DO UPDATE
-SET name = EXCLUDED.name, enabled = EXCLUDED.enabled, agent_id = EXCLUDED.agent_id, 
-    prompt_override = EXCLUDED.prompt_override, contact_type = EXCLUDED.contact_type, updated_at = NOW()
+SET name = EXCLUDED.name, enabled = EXCLUDED.enabled, agent_id = EXCLUDED.agent_id,
+    prompt_override = EXCLUDED.prompt_override, updated_at = NOW()
 RETURNING *;
 
 -- name: UpdateWaContactSettings :one
 UPDATE wa_contacts
-SET enabled = $2, agent_id = $3, contact_type = $4, updated_at = NOW()
+SET enabled = $2, agent_id = $3, updated_at = NOW()
 WHERE chat_id = $1
 RETURNING *;
 
@@ -102,6 +111,32 @@ INSERT INTO wa_activity (
 -- name: ListRecentWaActivity :many
 SELECT * FROM wa_activity
 ORDER BY ts DESC LIMIT $1;
+
+-- name: CreateWaMessage :exec
+INSERT INTO wa_messages (id, chat_id, direction, sender, msg_type, content, status)
+VALUES ($1, $2, $3, $4, $5, $6, $7);
+
+-- name: ListWaMessagesByChat :many
+SELECT * FROM wa_messages
+WHERE chat_id = $1 AND ($2::bigint = 0 OR seq < $2)
+ORDER BY seq DESC LIMIT $3;
+
+-- name: ListWaChatsSummary :many
+SELECT * FROM (
+    SELECT DISTINCT ON (m.chat_id)
+        m.chat_id, m.content AS last_message, m.direction AS last_direction,
+        m.sender AS last_sender, m.created_at AS last_message_at,
+        c.name AS contact_name, c.enabled AS contact_enabled, c.agent_id AS contact_agent_id
+    FROM wa_messages m
+    LEFT JOIN wa_contacts c ON c.chat_id = m.chat_id
+    ORDER BY m.chat_id, m.created_at DESC, m.id DESC
+) t
+ORDER BY last_message_at DESC;
+
+-- name: RedactWaMessagesBefore :exec
+UPDATE wa_messages
+SET content = '[redacted]'
+WHERE created_at < $1 AND content <> '[redacted]';
 
 -- name: CreateConversationTurn :one
 INSERT INTO conversation_turns (chat_id, role, content)
@@ -153,3 +188,37 @@ DELETE FROM conversation_turns WHERE ts < $1;
 UPDATE wa_activity
 SET transcript = '[redacted]', reply = '[redacted]'
 WHERE ts < $1 AND transcript <> '[redacted]';
+
+-- Voice-note archive (Firebase Cloud Storage ledger) ------------------------
+
+-- name: UpsertWaVoiceNote :exec
+-- ON CONFLICT DO NOTHING makes enqueueing idempotent: re-processing the same
+-- WhatsApp message never creates a second upload job.
+INSERT INTO wa_voice_notes (id, chat_id, direction, sender, receiver, object_path, mime_type, size_bytes, duration_seconds, status)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending')
+ON CONFLICT (id) DO NOTHING;
+
+-- name: MarkWaVoiceNoteUploaded :exec
+UPDATE wa_voice_notes
+SET status = 'uploaded', uploaded_at = NOW(), last_error = NULL
+WHERE id = $1;
+
+-- name: MarkWaVoiceNoteFailed :exec
+-- Failure keeps the row 'pending' (retryable) until attempts reaches the cap,
+-- then flips it to the terminal 'failed'. next_attempt_at carries the
+-- caller-computed exponential backoff.
+UPDATE wa_voice_notes
+SET attempts = attempts + 1,
+    last_error = $2,
+    next_attempt_at = $3,
+    status = CASE WHEN attempts + 1 >= $4 THEN 'failed' ELSE 'pending' END
+WHERE id = $1;
+
+-- name: ListPendingWaVoiceNotes :many
+SELECT * FROM wa_voice_notes
+WHERE status = 'pending' AND next_attempt_at <= NOW()
+ORDER BY next_attempt_at ASC
+LIMIT $1;
+
+-- name: PurgeWaVoiceNotesBefore :exec
+DELETE FROM wa_voice_notes WHERE created_at < $1;

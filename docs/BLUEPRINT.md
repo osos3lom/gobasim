@@ -3,7 +3,7 @@
 > **WhatsApp voice as the primary UI for the `mshalia` ERP** — a domain-agnostic, tool-using AI operations assistant.
 > This document is the **single source of truth**: target architecture, current-vs-target gap, and the phased roadmap.
 > **Architecture note (2026-07):** the platform was originally designed as three runtimes (Go gateway / Python FastAPI+LangGraph backend / Next.js dashboard, see git history). It has since been **consolidated into a single Go binary** (`module sawt-go`, built as `sawt-gateway`) that owns the WhatsApp socket, the reasoning loop, speech, and the operator dashboard in one process. This document describes the **current Go implementation** — it supersedes the old three-runtime diagram.
-> Companion docs: [`SPRINT-01.md`](SPRINT-01.md) / [`SPRINT-01-VERIFICATION.md`](SPRINT-01-VERIFICATION.md) (history from the pre-consolidation sprint) · [`IMPLEMENTATION-PLAN.md`](IMPLEMENTATION-PLAN.md) (phased plan to close the gaps below) · [`REFERENCE_REPO_SKILLS.md`](REFERENCE_REPO_SKILLS.md) / [`codebase-map/SKILL.md`](codebase-map/SKILL.md) (⚠️ **stale** — describe the old LangGraph/Drizzle/TypeScript design, kept only for the `mshalia`-side ERP Gateway tool-contract patterns, which are still accurate).
+> Companion docs: [`README.md`](README.md) (docs index) · [`IMPLEMENTATION-PLAN.md`](IMPLEMENTATION-PLAN.md) (production-readiness status + go-live roadmap) · [`DEPLOYMENT.md`](DEPLOYMENT.md) (deploy/ops runbook) · [`BACKLOG.md`](BACKLOG.md) (feature backlog + delivery record) · [`mshalia-side.md`](mshalia-side.md) (external ERP-gateway brief) · [`REFERENCE_REPO_SKILLS.md`](REFERENCE_REPO_SKILLS.md) (⚠️ reference-only — LangGraph/Python-flavored patterns, kept for the `mshalia`-side ERP Gateway tool-contract concepts).
 
 ---
 
@@ -102,7 +102,7 @@ Legend: ✅ built · ⚠️ partial · ⛔ missing · 🛑 critical defect (must
 
 ## 4. Roadmap (milestones, done-when)
 
-The original M0–M7 numbering is preserved for continuity with `SPRINT-01.md`, updated to reflect the Go rewrite. A new **M8** captures production-readiness debt this audit surfaced that wasn't in the original list at all.
+The original M0–M7 numbering is preserved for continuity with the pre-consolidation sprint history (in `git log`), updated to reflect the Go rewrite. A new **M8** captures production-readiness debt this audit surfaced that wasn't in the original list at all.
 
 - **M0 — Consolidation.** ✅ Done (historical). Superseded in spirit by the Go rewrite itself, which is a much larger consolidation than originally scoped.
 - **M1 — Voice in/out.** ✅ Done, re-implemented in Go (`internal/speech/*`, `internal/audio/audio.go`) instead of Python. **Remaining:** dialect-accuracy tuning; never verified live through the operations tool loop together.

@@ -1,0 +1,32 @@
+{{define "error.html"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Status}} — Sawt Conversational ERP</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎙️</text></svg>">
+    <link rel="stylesheet" href="/static/app.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body class="min-h-screen flex items-center justify-center p-4 login-body">
+
+    <div class="w-full max-w-md p-8 rounded-2xl login-glass shadow-2xl relative text-center">
+        <div class="absolute -top-10 -left-10 w-40 h-40 bg-indigo-500/10 rounded-full blur-3xl"></div>
+        <div class="absolute -bottom-10 -right-10 w-40 h-40 bg-pink-500/10 rounded-full blur-3xl"></div>
+
+        <span class="text-4xl">🎙️</span>
+        <h1 class="text-5xl font-bold tracking-tight text-white mt-4">{{.Status}}</h1>
+        <p class="text-gray-400 mt-2">{{.Message}}</p>
+
+        <a href="/dashboard"
+           class="mt-8 inline-block px-6 py-3 bg-gradient-to-r from-indigo-500 to-indigo-700 hover:from-indigo-600 hover:to-indigo-800 text-white font-semibold rounded-xl transition duration-200 shadow-lg shadow-indigo-500/20 active:scale-[0.98]">
+            Back to dashboard
+        </a>
+    </div>
+
+</body>
+</html>
+{{end}}

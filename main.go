@@ -20,6 +20,7 @@ import (
 	"sawt-go/internal/ratelimit"
 	"sawt-go/internal/speech"
 	"sawt-go/internal/trace"
+	"sawt-go/internal/voicenotes"
 	waClient "sawt-go/internal/whatsmeow"
 	"sawt-go/internal/workflow"
 	"sawt-go/web"
@@ -131,13 +132,32 @@ func main() {
 	erpClient := erp.NewClient(cfg.MshaliaAPIURL, cfg.AgentGatewaySecret)
 	wfEngine := workflow.NewWorkflowEngine(cfg, erpClient, queries)
 
+	// Voice-note archival to Firebase Cloud Storage. Optional: a nil store is
+	// inert, so the pipeline needs no feature flags. Init failure only warns —
+	// archival must never keep the assistant itself from starting.
+	var voiceStore *voicenotes.Store
+	if cfg.VoiceStorageBucket != "" {
+		up, err := voicenotes.NewGCSUploader(ctx, cfg.VoiceStorageBucket)
+		if err != nil {
+			log.Printf("WARNING: voice-note archival disabled — GCS client init failed: %v", err)
+		} else if voiceStore, err = voicenotes.NewStore(cfg.VoiceStoragePrefix, cfg.VoiceSpoolDir, queries, up); err != nil {
+			log.Printf("WARNING: voice-note archival disabled — %v", err)
+			voiceStore = nil
+		} else {
+			voiceStore.StartWorker(ctx)
+			log.Printf("Voice notes: archiving to gs://%s/%s (spool: %s)", cfg.VoiceStorageBucket, cfg.VoiceStoragePrefix, cfg.VoiceSpoolDir)
+		}
+	} else {
+		log.Println("Voice notes: archival disabled (VOICE_STORAGE_BUCKET not set).")
+	}
+
 	// 3. Initialize WhatsApp Connection Manager
 	waMgr := waClient.NewWhatsAppManager(cfg.DatabaseURL)
 
 	err = waMgr.Initialize(ctx, func(evt interface{}) {
 		switch v := evt.(type) {
 		case *events.Message:
-			go handleIncomingMessage(ctx, waMgr.Client, v, queries, sttOrch, ttsOrch, erpClient, wfEngine)
+			go handleIncomingMessage(ctx, waMgr.Client, v, queries, sttOrch, ttsOrch, erpClient, wfEngine, voiceStore)
 		case *events.Connected:
 			waMgr.SetState(waClient.StateConnected, "", "")
 			log.Println("WhatsApp connection established.")
@@ -150,33 +170,34 @@ func main() {
 		log.Fatalf("Fatal: WhatsApp manager initialization failed: %v", err)
 	}
 
+	// Acquire the QR channel BEFORE connecting, and synchronously. whatsmeow's
+	// GetQRChannel returns ErrQRAlreadyConnected once the socket is connected,
+	// so it must run before Connect(). Doing it inside a goroutine isn't enough:
+	// the goroutine would race Connect() on the main thread and almost always
+	// lose, leaving the dashboard stuck on "disconnected" with no QR to scan.
+	// RearmQR + StreamQRToState are shared with the dashboard's "Generate new
+	// QR" re-pair action (see web/server.go) so this sequence has one
+	// implementation, not two.
+	var qrChan <-chan whatsmeow.QRChannelItem
+	if waMgr.Client.Store.ID == nil {
+		qrChan, err = waMgr.RearmQR(ctx)
+		if err != nil {
+			log.Printf("Warning: could not open QR channel — dashboard/console QR will be unavailable: %v", err)
+		}
+	}
+
 	// Connect Whatsmeow client
 	err = waMgr.Connect(ctx)
 	if err != nil {
 		log.Fatalf("Fatal: Failed to connect WhatsApp client: %v", err)
 	}
 
-	// Start background QR Code generator if client is not logged in
-	if waMgr.Client.Store.ID == nil {
-		go func() {
-			qrChan, err := waMgr.Client.GetQRChannel(ctx)
-			if err != nil {
-				log.Printf("Failed to get QR channel: %v", err)
-				return
-			}
-			for qr := range qrChan {
-				if qr.Event == "code" {
-					// Cache the QR code in the manager for the dashboard
-					waMgr.SetState(waClient.StateQRReady, qr.Code, "")
-
-					// Print to console terminal
-					log.Println("New WhatsApp pairing QR Code generated. Displaying in console:")
-					qrterminal.GenerateHalfBlock(qr.Code, qrterminal.L, os.Stdout)
-				} else {
-					log.Printf("QR Channel Event: %s", qr.Event)
-				}
-			}
-		}()
+	// Stream QR codes (channel acquired above) to the dashboard state + console.
+	if qrChan != nil {
+		go waMgr.StreamQRToState(ctx, qrChan, func(code string) {
+			log.Println("New WhatsApp pairing QR Code generated. Displaying in console:")
+			qrterminal.GenerateHalfBlock(code, qrterminal.L, os.Stdout)
+		})
 	}
 
 	// Trigger pairing code if phone configuration is set at VM startup
@@ -198,7 +219,8 @@ func main() {
 	}
 
 	// 4. Start Dashboard HTTP Web Server
-	webServer := web.NewServer(cfg, queries, waMgr)
+	webServer := web.NewServer(cfg, queries, waMgr, ttsOrch)
+	webServer.SetVoiceStore(voiceStore) // nil-safe: no-ops when archival is disabled
 	router := webServer.GetRouter()
 
 	go func() {
@@ -224,8 +246,9 @@ func main() {
 
 // runRetention deletes or redacts PII-bearing rows older than the retention
 // window: STT/TTS history and conversation turns are deleted; wa_activity
-// rows are redacted in place so the audit metadata (timings, status, tool ids)
-// survives.
+// and wa_messages rows are redacted in place — wa_activity so the audit
+// metadata (timings, status, tool ids) survives, wa_messages so the
+// dashboard's Messages tab doesn't show gaps in a conversation thread.
 func runRetention(ctx context.Context, queries *database.Queries, days int) {
 	cutoff := time.Now().AddDate(0, 0, -days)
 	log.Printf("Retention: purging/redacting rows older than %s (%d days)...", cutoff.Format("2006-01-02"), days)
@@ -235,6 +258,10 @@ func runRetention(ctx context.Context, queries *database.Queries, days int) {
 		"tts_history":        queries.PurgeTtsHistoryBefore,
 		"conversation_turns": queries.PurgeConversationTurnsBefore,
 		"wa_activity":        queries.RedactWaActivityBefore,
+		"wa_messages":        queries.RedactWaMessagesBefore,
+		// Ledger rows only — the GCS objects themselves are deleted by a
+		// bucket lifecycle rule matching RETENTION_DAYS (see DEPLOYMENT.md).
+		"wa_voice_notes": queries.PurgeWaVoiceNotesBefore,
 	} {
 		if err := fn(ctx, cutoff); err != nil {
 			monitor.ReportError(ctx, "retention:"+name, err)
@@ -289,6 +316,24 @@ func seedAdminUser(ctx context.Context, pool *pgxpool.Pool, queries *database.Qu
 	return nil
 }
 
+// newContactParams builds the row for a first-contact auto-create. Enabled is
+// always false: a human operator must explicitly opt each chat in from the
+// dashboard before the agent may reply (product rule D1; the schema default
+// wa_contacts.enabled DEFAULT FALSE encodes the same intent).
+func newContactParams(chatJID, pushName string) database.CreateOrUpdateWaContactParams {
+	name := pushName
+	if name == "" {
+		name = strings.Split(chatJID, "@")[0]
+	}
+	return database.CreateOrUpdateWaContactParams{
+		ChatID:         chatJID,
+		Name:           name,
+		Enabled:        false,
+		AgentID:        nil,
+		PromptOverride: nil,
+	}
+}
+
 func handleIncomingMessage(
 	ctx context.Context,
 	client *whatsmeow.Client,
@@ -298,6 +343,7 @@ func handleIncomingMessage(
 	ttsOrch *speech.TTSOrchestrator,
 	erpClient *erp.Client,
 	wfEngine *workflow.WorkflowEngine,
+	voiceStore *voicenotes.Store,
 ) {
 	if evt.Info.IsFromMe {
 		return
@@ -331,42 +377,23 @@ func handleIncomingMessage(
 		return
 	}
 
-	phone := strings.Split(evt.Info.Chat.String(), "@")[0]
-	identity, err := erpClient.ResolveIdentity(ctx, phone)
-	if err != nil {
-		monitor.ReportError(ctx, "identity", err)
-	}
-
 	// Look up contact in wa_contacts to verify if they are enabled
 	contact, err := queries.GetWaContact(ctx, evt.Info.Chat.String())
 	if err != nil {
-		// Contact does not exist yet. Enable verified staff/clients, disable unverified/unknown ones.
-		enabled := false
-		if identity != nil && !identity.PhoneUnverified {
-			enabled = true
-		}
-		name := evt.Info.PushName
-		if name == "" {
-			name = phone
-		}
-		contact, err = queries.CreateOrUpdateWaContact(ctx, database.CreateOrUpdateWaContactParams{
-			ChatID:         evt.Info.Chat.String(),
-			Name:           name,
-			Enabled:        enabled,
-			AgentID:        nil,
-			PromptOverride: nil,
-			ContactType:    "viewer", // Default role
-		})
+		// Contact does not exist yet. Auto-create it DISABLED so it shows up
+		// in the dashboard, then drop the message: the agent must never talk
+		// to a new person until an operator explicitly enables the chat
+		// (explicit opt-in; matches wa_contacts.enabled DEFAULT FALSE).
+		contact, err = queries.CreateOrUpdateWaContact(ctx, newContactParams(evt.Info.Chat.String(), evt.Info.PushName))
 		if err != nil {
 			trace.Logf(ctx, "Inbound: Warning: Failed to auto-create contact %s: %v", evt.Info.Chat.String(), err)
-		} else {
-			trace.Logf(ctx, "Inbound: Auto-created new contact in database: %s (%s, enabled=%t)", contact.Name, contact.ChatID, contact.Enabled)
+			return
 		}
+		trace.Logf(ctx, "Inbound: Auto-created contact %s (%s) as disabled; awaiting operator opt-in", contact.Name, contact.ChatID)
+		return
 	}
-
 	if !contact.Enabled {
-		// Send unapproved warning reply to the user
-		sendTextReply(ctx, client, evt.Info.Chat, "هذا الرقم غير مفعل بعد. يرجى الطلب من الإدارة تفعيل رقمك وتحديد دورك في النظام.\nThis number is not approved yet. Please ask an admin to enable it in the dashboard.")
+		// Drop message processing if contact is disabled
 		trace.Logf(ctx, "Inbound: Discarding message from disabled contact %s (%s)", contact.Name, contact.ChatID)
 		return
 	}
@@ -398,6 +425,18 @@ func handleIncomingMessage(
 			sendTextReply(ctx, client, evt.Info.Chat, "عذراً، لم أتمكن من تحميل الرسالة الصوتية.")
 			return
 		}
+
+		// Archive the received voice note (async: spool + ledger row only;
+		// the upload worker streams it to Firebase Cloud Storage later).
+		voiceStore.Save(ctx, voicenotes.Meta{
+			MessageID:       evt.Info.ID,
+			ChatID:          evt.Info.Chat.String(),
+			Direction:       "in",
+			Sender:          strings.Split(evt.Info.Chat.String(), "@")[0],
+			Receiver:        "sawt",
+			DurationSeconds: int32(evt.Message.AudioMessage.GetSeconds()),
+			Timestamp:       evt.Info.Timestamp,
+		}, incomingAudio)
 
 		// Transcode OGG/Opus to WAV
 		trace.Logf(ctx, "Inbound: Transcoding OGG/Opus to WAV...")
@@ -436,21 +475,30 @@ func handleIncomingMessage(
 		return
 	}
 
-	// 2. Resolve Actor Identity from Phone JID & apply overrides
-	if identity == nil {
-		identity = &erp.Identity{
-			UID:    "guest-" + phone,
-			Phone:  phone,
-			Role:   contact.ContactType,
-			OrgIDs: []string{"default"},
-		}
-	} else {
-		if contact.ContactType != "" {
-			identity.Role = contact.ContactType
-		}
-		if len(identity.OrgIDs) == 0 {
-			identity.OrgIDs = []string{"default"}
-		}
+	// Log the inbound message to wa_messages for the dashboard's Messages
+	// tab (distinct from wa_activity below, which is a metrics/audit log,
+	// not a message browser). Best-effort: a logging failure shouldn't abort
+	// the conversation pipeline.
+	inMsgType := "text"
+	if isAudio {
+		inMsgType = "voice"
+	}
+	_ = queries.CreateWaMessage(ctx, database.CreateWaMessageParams{
+		ID:        evt.Info.ID + "-in",
+		ChatID:    evt.Info.Chat.String(),
+		Direction: "in",
+		Sender:    "contact",
+		MsgType:   inMsgType,
+		Content:   text,
+		Status:    "delivered",
+	})
+
+	// 2. Resolve Actor Identity from Phone JID
+	var identity *erp.Identity
+	phone := strings.Split(evt.Info.Chat.String(), "@")[0]
+	identity, err = erpClient.ResolveIdentity(ctx, phone)
+	if err != nil {
+		monitor.ReportError(ctx, "identity", err)
 	}
 
 	// 3. Load conversation memory, then invoke the workflow with real history
@@ -515,6 +563,16 @@ func handleIncomingMessage(
 					DurationMs: ttsMs,
 					SizeBytes:  int32(len(replyAudio)),
 				})
+
+				// Archive the outgoing voice note alongside the inbound one.
+				voiceStore.Save(ctx, voicenotes.Meta{
+					MessageID: evt.Info.ID + "-reply",
+					ChatID:    evt.Info.Chat.String(),
+					Direction: "out",
+					Sender:    "sawt",
+					Receiver:  strings.Split(evt.Info.Chat.String(), "@")[0],
+					Timestamp: time.Now(),
+				}, replyAudio)
 			}
 		}
 	}
@@ -557,6 +615,28 @@ func handleIncomingMessage(
 		}
 	} else if replyText != "" {
 		sendTextReply(ctx, client, evt.Info.Chat, replyText)
+	}
+
+	// Log the outbound reply to wa_messages (see note above on wa_messages
+	// vs wa_activity). msg_type/status mirror what was actually attempted.
+	if replyText != "" {
+		outMsgType := "text"
+		if len(replyAudio) > 0 {
+			outMsgType = "voice"
+		}
+		outStatus := "sent"
+		if activityStatus != "ok" {
+			outStatus = "failed"
+		}
+		_ = queries.CreateWaMessage(ctx, database.CreateWaMessageParams{
+			ID:        evt.Info.ID + "-out",
+			ChatID:    evt.Info.Chat.String(),
+			Direction: "out",
+			Sender:    "bot",
+			MsgType:   outMsgType,
+			Content:   replyText,
+			Status:    outStatus,
+		})
 	}
 
 	// 6. Log Activity Log to Neon DB

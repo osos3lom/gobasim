@@ -1,13 +1,52 @@
-{{define "content"}}
+{{template "layout" .}}
+
+{{define "workflow-content"}}
 <div class="space-y-8 max-w-4xl">
 
     <!-- Header Description -->
-    <div>
+    <div class="flex items-center justify-between gap-4">
         <p class="text-sm text-gray-400">View and update the active prompts and responses for your Sawt agents in Neon DB. Changes apply immediately to WhatsApp without restarting the server.</p>
+        <button type="button" onclick="document.getElementById('new-agent-dialog').classList.remove('hidden')"
+            class="shrink-0 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl transition duration-200 active:scale-95">
+            + New Agent
+        </button>
     </div>
 
-    <!-- Feedback Banner (Target for HTMX updates) -->
-    <div id="feedback" class="transition duration-300"></div>
+    <!-- Feedback Banner (Target for HTMX updates, and for create-agent errors) -->
+    <div id="feedback" class="transition duration-300">
+        {{if .Error}}
+        <div class="bg-red-950/40 border border-red-900/60 text-red-200 px-4 py-3 rounded-xl text-sm flex items-center space-x-2">
+            <svg class="w-5 h-5 text-red-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+            <span>{{.Error}}</span>
+        </div>
+        {{end}}
+    </div>
+
+    <!-- New Agent dialog (plain CSS toggle, no JS framework needed) -->
+    <div id="new-agent-dialog" class="hidden fixed inset-0 z-40 flex items-center justify-center p-4 bg-black/60">
+        <div class="w-full max-w-md p-6 rounded-2xl glass border border-indigo-950/40 space-y-4">
+            <h3 class="text-lg font-bold text-white">Create a new agent</h3>
+            <p class="text-xs text-gray-400">Starts blank with the default ASR/LLM/TTS providers &mdash; edit its prompt below once it's created.</p>
+            <form action="/dashboard/workflows/create" method="POST" class="space-y-4">
+                <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+                <div>
+                    <label for="new-agent-name" class="block text-sm font-semibold text-gray-300 mb-2">Agent name</label>
+                    <input type="text" id="new-agent-name" name="name" required maxlength="100"
+                        class="w-full bg-[#03060c]/60 border border-indigo-950/80 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-xl px-4 py-3 text-sm text-slate-300 outline-none transition duration-200">
+                </div>
+                <div class="flex justify-end gap-3 pt-2">
+                    <button type="button" onclick="document.getElementById('new-agent-dialog').classList.add('hidden')"
+                        class="px-4 py-2 text-gray-400 hover:text-gray-200 text-xs font-semibold rounded-xl transition duration-200">
+                        Cancel
+                    </button>
+                    <button type="submit"
+                        class="px-6 py-2.5 bg-gradient-to-r from-indigo-500 to-indigo-700 hover:from-indigo-600 hover:to-indigo-800 text-white font-semibold text-sm rounded-xl transition duration-200 shadow-md shadow-indigo-500/10 active:scale-[0.98]">
+                        Create
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
 
     {{range .Agents}}
     <!-- Agent Editor Box -->
@@ -17,7 +56,10 @@
                 <h3 class="text-xl font-bold text-white">{{.Name}}</h3>
                 <span class="text-xs text-indigo-400 font-mono">ID: {{.ID}}</span>
             </div>
-            <div>
+            <div class="flex items-center gap-2">
+                {{if .HasUnpublishedChanges}}
+                <span class="text-xs bg-amber-950/60 text-amber-300 px-3 py-1 rounded-full font-semibold border border-amber-900" title="This agent was edited after its last publish">Unpublished changes</span>
+                {{end}}
                 <span class="text-xs bg-indigo-950/60 text-indigo-300 px-3 py-1 rounded-full font-semibold border border-indigo-900 capitalize">{{.Status}}</span>
             </div>
         </div>
@@ -54,11 +96,20 @@
                 </div>
             </div>
 
-            <!-- Submit -->
-            <div class="flex justify-end pt-2">
-                <button type="submit" 
+            <!-- Status + Submit -->
+            <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pt-2">
+                <div class="flex items-center gap-3">
+                    <label for="status-{{.ID}}" class="text-sm font-semibold text-gray-300">Status</label>
+                    <select id="status-{{.ID}}" name="status"
+                        class="bg-[#03060c]/60 border border-indigo-950/80 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-xl px-3 py-2 text-sm text-slate-300 outline-none transition duration-200">
+                        <option value="draft" {{if eq .Status "draft"}}selected{{end}}>Draft</option>
+                        <option value="published" {{if eq .Status "published"}}selected{{end}}>Published</option>
+                    </select>
+                    <span class="text-xs text-gray-500">Publishing requires a non-empty system prompt. Only published agents can be assigned to chats.</span>
+                </div>
+                <button type="submit"
                     class="px-6 py-3 bg-gradient-to-r from-indigo-500 to-indigo-700 hover:from-indigo-600 hover:to-indigo-800 text-white font-semibold text-sm rounded-xl transition duration-200 shadow-md shadow-indigo-500/10 active:scale-[0.98]">
-                    Save Prompt Changes
+                    Save Changes
                 </button>
             </div>
         </form>

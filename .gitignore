@@ -18,3 +18,6 @@ voice-spool/
 # Editor/OS noise
 .DS_Store
 Thumbs.db
+
+# Node (Tailwind CSS build only — web/static/app.css is committed)
+node_modules/
