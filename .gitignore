@@ -9,6 +9,12 @@ sawt-gateway
 # Local STT models
 models/
 
+# Node (Tailwind CSS build only — web/static/app.css is committed)
+node_modules/
+
+# Runtime artifacts (voice-note spool dir)
+voice-spool/
+
 # Editor/OS noise
 .DS_Store
 Thumbs.db

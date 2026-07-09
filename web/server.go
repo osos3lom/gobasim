@@ -31,6 +31,7 @@ import (
 )
 
 // TemplatesFS holds embedded HTML template files.
+//
 //go:embed templates/*
 var templatesFS embed.FS
 
@@ -194,7 +195,7 @@ func (s *Server) handleGetDashboard(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGetWhatsAppStatus(w http.ResponseWriter, r *http.Request) {
 	status, qrString, pairCode := s.waMgr.GetStatus()
-	
+
 	s.renderTemplate(w, "dashboard.html", map[string]interface{}{
 		"WAStatus":  string(status),
 		"WAQR":      qrString,

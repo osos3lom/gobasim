@@ -554,7 +554,6 @@ func (q *Queries) ListWaContacts(ctx context.Context) ([]WaContact, error) {
 	return items, nil
 }
 
-
 // -- CreateWaActivity --
 type CreateWaActivityParams struct {
 	ID          string  `json:"id"`

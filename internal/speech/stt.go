@@ -70,7 +70,7 @@ func (o *STTOrchestrator) Transcribe(ctx context.Context, wavBytes []byte, langu
 			log.Printf("STT Orchestrator: Success with provider '%s'.", provider.Name())
 			return text, provider.Name(), nil
 		}
-		
+
 		log.Printf("STT Orchestrator: Provider '%s' failed: %v", provider.Name(), err)
 		lastErr = err
 	}

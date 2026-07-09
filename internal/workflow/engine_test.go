@@ -21,9 +21,14 @@ func newTestEngine(fake completionFn) *WorkflowEngine {
 }
 
 func linkedState(text string) *State {
+	// A resolved identity always carries an app-role; "manager" represents a
+	// verified staff member with access to the operations/accounting/admin
+	// tools. Without a role, the role-based tool filter in executeToolLoop
+	// fails closed and strips every tool (that filtering is exercised
+	// separately in TestToolLoopFiltersToolsByRole).
 	return &State{
 		Messages:      []Message{{Role: "user", Content: text}},
-		ActorIdentity: &erp.Identity{UID: "u1", OrgIDs: []string{"org1"}},
+		ActorIdentity: &erp.Identity{UID: "u1", Role: "manager", OrgIDs: []string{"org1"}},
 		ChatID:        "123@s.whatsapp.net",
 	}
 }
@@ -39,7 +44,7 @@ func TestClassifyIntentCleansLLMOutput(t *testing.T) {
 		{"administration!", "administration"},
 		{"other", "other"},
 		{"a whole sentence instead of one word", "operations"}, // safe default
-		{"", "operations"}, // safe default
+		{"", "operations"},                                     // safe default
 	}
 
 	for _, tc := range cases {
@@ -151,8 +156,8 @@ func TestExecuteToolLoopStopsAtMaxIterations(t *testing.T) {
 
 func TestAgentRoutingExposesOnlyThatAgentsTools(t *testing.T) {
 	cases := []struct {
-		intent       string
-		wantTool     string
+		intent        string
+		wantTool      string
 		forbiddenTool string
 	}{
 		{"operations", "get_horse", "record_expense"},
@@ -194,6 +199,65 @@ func TestAgentRoutingExposesOnlyThatAgentsTools(t *testing.T) {
 		}
 		if forbidden {
 			t.Errorf("%s agent must NOT expose %s; saw %v", tc.intent, tc.forbiddenTool, seenTools)
+		}
+	}
+}
+
+// TestToolLoopFiltersToolsByRole locks in the role-based tool filtering added
+// to executeToolLoop: a tool is only exposed to the model when the actor's
+// role meets the tool's minimum role. Filtering fails closed — a role below a
+// tool's minimum never sees it. get_horse is viewer-level; update_task_status
+// is manager-level.
+func TestToolLoopFiltersToolsByRole(t *testing.T) {
+	cases := []struct {
+		role          string
+		viewerTool    string // viewer-level, must always be visible
+		managerTool   string // manager-level, gated
+		expectManager bool   // whether the manager-level tool should be visible
+	}{
+		{"viewer", "get_horse", "update_task_status", false}, // viewer sees reads, not writes
+		{"manager", "get_horse", "update_task_status", true}, // manager sees both
+	}
+
+	for _, tc := range cases {
+		var seenTools []string
+		call := 0
+		e := newTestEngine(func(ctx context.Context, m []Message, tools []ToolDefinition, temp float32, maxTokens int) (*Message, error) {
+			call++
+			if call == 1 { // ClassifyIntent
+				return &Message{Role: "assistant", Content: "operations"}, nil
+			}
+			seenTools = nil
+			for _, td := range tools {
+				seenTools = append(seenTools, td.Function.Name)
+			}
+			return &Message{Role: "assistant", Content: "done"}, nil
+		})
+
+		state := &State{
+			Messages:      []Message{{Role: "user", Content: "do a thing"}},
+			ActorIdentity: &erp.Identity{UID: "u1", Role: tc.role, OrgIDs: []string{"org1"}},
+			ChatID:        "123@s.whatsapp.net",
+		}
+		if err := e.Execute(context.Background(), state); err != nil {
+			t.Fatalf("role %s: unexpected error: %v", tc.role, err)
+		}
+
+		var sawViewer, sawManager bool
+		for _, name := range seenTools {
+			if name == tc.viewerTool {
+				sawViewer = true
+			}
+			if name == tc.managerTool {
+				sawManager = true
+			}
+		}
+		if !sawViewer {
+			t.Errorf("role %q must always see viewer-level tool %q; saw %v", tc.role, tc.viewerTool, seenTools)
+		}
+		if sawManager != tc.expectManager {
+			t.Errorf("role %q: manager-level tool %q visible=%v, want %v; saw %v",
+				tc.role, tc.managerTool, sawManager, tc.expectManager, seenTools)
 		}
 	}
 }

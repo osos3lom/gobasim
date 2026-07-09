@@ -133,7 +133,7 @@ func main() {
 
 	// 3. Initialize WhatsApp Connection Manager
 	waMgr := waClient.NewWhatsAppManager(cfg.DatabaseURL)
-	
+
 	err = waMgr.Initialize(ctx, func(evt interface{}) {
 		switch v := evt.(type) {
 		case *events.Message:
@@ -168,7 +168,7 @@ func main() {
 				if qr.Event == "code" {
 					// Cache the QR code in the manager for the dashboard
 					waMgr.SetState(waClient.StateQRReady, qr.Code, "")
-					
+
 					// Print to console terminal
 					log.Println("New WhatsApp pairing QR Code generated. Displaying in console:")
 					qrterminal.GenerateHalfBlock(qr.Code, qrterminal.L, os.Stdout)
@@ -332,8 +332,7 @@ func handleIncomingMessage(
 	}
 
 	phone := strings.Split(evt.Info.Chat.String(), "@")[0]
-	var identity *erp.Identity
-	identity, err = erpClient.ResolveIdentity(ctx, phone)
+	identity, err := erpClient.ResolveIdentity(ctx, phone)
 	if err != nil {
 		monitor.ReportError(ctx, "identity", err)
 	}
@@ -414,7 +413,7 @@ func handleIncomingMessage(
 		var lang = "ar" // Target Arabic
 		text, sttProvider, err = sttOrch.Transcribe(ctx, wavBytes, lang)
 		sttMs = int32(time.Since(sttStart).Milliseconds())
-		
+
 		if err != nil {
 			monitor.ReportError(ctx, "stt", err)
 			sendTextReply(ctx, client, evt.Info.Chat, "عذراً، لم أتمكن من تحويل الصوت إلى نص.")
@@ -531,7 +530,7 @@ func handleIncomingMessage(
 		if err != nil {
 			trace.Logf(ctx, "Outbound: Failed to upload audio: %v, falling back to text", err)
 			sendTextReply(ctx, client, evt.Info.Chat, replyText)
-			
+
 			errStr := err.Error()
 			activityStatus = "failed"
 			activityError = &errStr
@@ -562,7 +561,7 @@ func handleIncomingMessage(
 
 	// 6. Log Activity Log to Neon DB
 	toolCallsBytes, _ := json.Marshal(state.ToolResults)
-	
+
 	// Fetch the assigned agent for this contact from database
 	var assignedAgentID *string
 	contact, err = queries.GetWaContact(ctx, evt.Info.Chat.String())

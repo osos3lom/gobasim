@@ -24,12 +24,12 @@ const (
 )
 
 type WhatsAppManager struct {
-	Client     *whatsmeow.Client
-	state      ConnectionState
-	qrString   string
-	pairCode   string
-	dbURL      string
-	mu         sync.RWMutex
+	Client   *whatsmeow.Client
+	state    ConnectionState
+	qrString string
+	pairCode string
+	dbURL    string
+	mu       sync.RWMutex
 }
 
 func NewWhatsAppManager(dbURL string) *WhatsAppManager {
@@ -80,7 +80,7 @@ func (m *WhatsAppManager) Initialize(ctx context.Context, eventHandler func(inte
 
 	clientLog := waLog.Stdout("WhatsApp", "WARN", true)
 	client := whatsmeow.NewClient(deviceStore, clientLog)
-	
+
 	client.AddEventHandler(eventHandler)
 	m.Client = client
 

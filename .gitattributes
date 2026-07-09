@@ -1,2 +1,6 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Go sources are always LF so gofmt stays clean on Windows checkouts and
+# matches the Linux CI environment.
+*.go text eol=lf

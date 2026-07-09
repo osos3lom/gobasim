@@ -34,7 +34,7 @@ func InitPool(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
 	// Test connection
 	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	
+
 	if err := pool.Ping(pingCtx); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("failed to ping database: %w", err)

@@ -17,11 +17,11 @@ import (
 )
 
 type Message struct {
-	Role       string      `json:"role"`
-	Content    string      `json:"content,omitempty"`
-	Name       string      `json:"name,omitempty"`
-	ToolCallID string      `json:"tool_call_id,omitempty"`
-	ToolCalls  []ToolCall  `json:"tool_calls,omitempty"`
+	Role       string     `json:"role"`
+	Content    string     `json:"content,omitempty"`
+	Name       string     `json:"name,omitempty"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
+	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 }
 
 type ToolCall struct {
@@ -371,6 +371,7 @@ func (e *WorkflowEngine) executeToolLoop(ctx context.Context, state *State, spec
 		tools = allowedTools
 	}
 
+	systemPrompt := e.resolveSystemPrompt(ctx, state.ChatID, spec.DefaultPrompt)
 	if state.Summary != "" {
 		systemPrompt += "\n\nSummary of the conversation so far:\n" + state.Summary
 	}
@@ -430,7 +431,7 @@ func (e *WorkflowEngine) executeToolLoop(ctx context.Context, state *State, spec
 			})
 
 			resBytes, _ := json.Marshal(toolRes)
-			
+
 			// Append response to history
 			toolMessage := Message{
 				Role:       "tool",

@@ -23,7 +23,7 @@ type contextKey string
 const UsernameContextKey contextKey = "username"
 
 type AuthManager struct {
-	cfg *config.Config
+	cfg     *config.Config
 	queries *database.Queries
 }
 

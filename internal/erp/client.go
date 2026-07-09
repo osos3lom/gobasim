@@ -46,10 +46,10 @@ func (c *Client) getSignedHeaders(body string) (http.Header, error) {
 	if c.secret == "" {
 		return nil, fmt.Errorf("ERP secret is not configured")
 	}
-	
+
 	timestamp := strconv.FormatInt(time.Now().UnixMilli(), 10)
 	sig := computeSignature(c.secret, timestamp, body)
-	
+
 	headers := make(http.Header)
 	headers.Set("Content-Type", "application/json")
 	headers.Set("x-swa-timestamp", timestamp)

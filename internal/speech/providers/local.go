@@ -40,7 +40,7 @@ func (p *LocalProvider) Transcribe(ctx context.Context, wavBytes []byte, languag
 	// 1. Create a temporary WAV file for the CLI to read
 	tmpDir := os.TempDir()
 	tmpWav := filepath.Join(tmpDir, fmt.Sprintf("sawt_stt_%d.wav", time.Now().UnixNano()))
-	
+
 	if err := os.WriteFile(tmpWav, wavBytes, 0600); err != nil {
 		return "", fmt.Errorf("failed to create temporary audio file: %w", err)
 	}

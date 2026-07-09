@@ -71,7 +71,7 @@ func (p *HuggingFaceProvider) Synthesize(ctx context.Context, text string, langu
 	// Space endpoint example: https://facebook-mms.hf.space/api/predict or similar public spaces.
 	// Defaulting to a standard prediction endpoint layout.
 	url := "https://facebook-multimodal-mms.hf.space/api/predict"
-	
+
 	// Gradio input format for MMS: [text, model/language]
 	payload := map[string]interface{}{
 		"data": []interface{}{

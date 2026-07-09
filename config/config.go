@@ -9,30 +9,30 @@ import (
 )
 
 type Config struct {
-	DatabaseURL          string
-	Port                 string
-	AgentGatewaySecret   string
-	MshaliaAPIURL        string
-	NimAPIKey            string
-	NimBaseURL           string
-	NimModel             string
-	SttProvider          string
-	SttModel             string
-	OpenaiAPIKey         string
-	OpenaiAPIBase        string
-	HfAPIKey             string
-	TtsProvider          string
-	TtsModel             string
-	PairPhoneNumber      string
-	SessionSecret        string
-	GroqAPIKey           string
-	GcpApiKey            string
-	SecureCookie         bool
-	AdminUsername        string
-	AdminPassword        string
-	LlmFallbackModel     string
-	ErrorWebhookURL      string
-	RetentionDays        int
+	DatabaseURL        string
+	Port               string
+	AgentGatewaySecret string
+	MshaliaAPIURL      string
+	NimAPIKey          string
+	NimBaseURL         string
+	NimModel           string
+	SttProvider        string
+	SttModel           string
+	OpenaiAPIKey       string
+	OpenaiAPIBase      string
+	HfAPIKey           string
+	TtsProvider        string
+	TtsModel           string
+	PairPhoneNumber    string
+	SessionSecret      string
+	GroqAPIKey         string
+	GcpApiKey          string
+	SecureCookie       bool
+	AdminUsername      string
+	AdminPassword      string
+	LlmFallbackModel   string
+	ErrorWebhookURL    string
+	RetentionDays      int
 }
 
 func LoadConfig() *Config {
@@ -95,30 +95,30 @@ func LoadConfig() *Config {
 	}
 
 	return &Config{
-		DatabaseURL:         os.Getenv("DATABASE_URL"),
-		Port:                port,
-		AgentGatewaySecret:  os.Getenv("AGENT_GATEWAY_SECRET"),
-		MshaliaAPIURL:       mshaliaURL,
-		NimAPIKey:           os.Getenv("NIM_API_KEY"),
-		NimBaseURL:          nimBaseURL,
-		NimModel:            nimModel,
-		SttProvider:         sttProvider,
-		SttModel:            sttModel,
-		OpenaiAPIKey:        os.Getenv("OPENAI_API_KEY"),
-		OpenaiAPIBase:       openaiAPIBase,
-		HfAPIKey:            os.Getenv("HF_API_KEY"),
-		TtsProvider:         ttsProvider,
-		TtsModel:            os.Getenv("TTS_MODEL"),
-		PairPhoneNumber:     os.Getenv("PAIR_PHONE_NUMBER"),
-		SessionSecret:       sessionSecret,
-		GroqAPIKey:          os.Getenv("GROQ_API_KEY"),
-		GcpApiKey:           os.Getenv("GCP_API_KEY"),
-		SecureCookie:        secureCookie,
-		AdminUsername:       os.Getenv("ADMIN_USERNAME"),
-		AdminPassword:       os.Getenv("ADMIN_PASSWORD"),
-		LlmFallbackModel:    llmFallbackModel,
-		ErrorWebhookURL:     os.Getenv("ERROR_WEBHOOK_URL"),
-		RetentionDays:       GetEnvInt("RETENTION_DAYS", 90),
+		DatabaseURL:        os.Getenv("DATABASE_URL"),
+		Port:               port,
+		AgentGatewaySecret: os.Getenv("AGENT_GATEWAY_SECRET"),
+		MshaliaAPIURL:      mshaliaURL,
+		NimAPIKey:          os.Getenv("NIM_API_KEY"),
+		NimBaseURL:         nimBaseURL,
+		NimModel:           nimModel,
+		SttProvider:        sttProvider,
+		SttModel:           sttModel,
+		OpenaiAPIKey:       os.Getenv("OPENAI_API_KEY"),
+		OpenaiAPIBase:      openaiAPIBase,
+		HfAPIKey:           os.Getenv("HF_API_KEY"),
+		TtsProvider:        ttsProvider,
+		TtsModel:           os.Getenv("TTS_MODEL"),
+		PairPhoneNumber:    os.Getenv("PAIR_PHONE_NUMBER"),
+		SessionSecret:      sessionSecret,
+		GroqAPIKey:         os.Getenv("GROQ_API_KEY"),
+		GcpApiKey:          os.Getenv("GCP_API_KEY"),
+		SecureCookie:       secureCookie,
+		AdminUsername:      os.Getenv("ADMIN_USERNAME"),
+		AdminPassword:      os.Getenv("ADMIN_PASSWORD"),
+		LlmFallbackModel:   llmFallbackModel,
+		ErrorWebhookURL:    os.Getenv("ERROR_WEBHOOK_URL"),
+		RetentionDays:      GetEnvInt("RETENTION_DAYS", 90),
 	}
 }
 

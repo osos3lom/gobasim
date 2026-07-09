@@ -359,41 +359,41 @@ var breedingAgent = agentSpec{
 // toolMinRole maps every tool to its minimum role requirement
 var toolMinRole = map[string]string{
 	// Operations
-	"get_horse":             "viewer",
-	"get_care_plan":         "viewer",
-	"list_tasks":            "viewer",
-	"update_task_status":    "manager",
-	"list_horses":           "viewer",
-	"list_stalls":           "viewer",
+	"get_horse":              "viewer",
+	"get_care_plan":          "viewer",
+	"list_tasks":             "viewer",
+	"update_task_status":     "manager",
+	"list_horses":            "viewer",
+	"list_stalls":            "viewer",
 	"get_stall_availability": "viewer",
-	"assign_stall":          "manager",
-	"register_horse":        "manager",
-	"check_in_horse":        "manager",
-	"check_out_horse":       "manager",
-	"report_incident":       "manager",
-	"list_incidents":        "viewer",
-	"book_vet_appointment":  "manager",
-	"record_treatment_plan": "manager",
+	"assign_stall":           "manager",
+	"register_horse":         "manager",
+	"check_in_horse":         "manager",
+	"check_out_horse":        "manager",
+	"report_incident":        "manager",
+	"list_incidents":         "viewer",
+	"book_vet_appointment":   "manager",
+	"record_treatment_plan":  "manager",
 
 	// Accounting
-	"list_invoices":         "manager",
-	"get_invoice":           "manager",
-	"record_expense":        "manager",
-	"record_payment":        "manager",
+	"list_invoices":  "manager",
+	"get_invoice":    "manager",
+	"record_expense": "manager",
+	"record_payment": "manager",
 
 	// Administration
-	"list_clients":          "manager",
-	"get_client":            "manager",
-	"list_contracts":        "manager",
-	"get_contract":          "manager",
+	"list_clients":   "manager",
+	"get_client":     "manager",
+	"list_contracts": "manager",
+	"get_contract":   "manager",
 
 	// Client
-	"list_my_horses":        "client",
-	"get_my_horse":          "client",
-	"list_my_invoices":      "client",
-	"get_my_balance":        "client",
-	"get_my_statement":      "client",
-	"list_my_contracts":      "client",
+	"list_my_horses":    "client",
+	"get_my_horse":      "client",
+	"list_my_invoices":  "client",
+	"get_my_balance":    "client",
+	"get_my_statement":  "client",
+	"list_my_contracts": "client",
 
 	// Sales
 	"list_available_horses": "viewer",
@@ -403,11 +403,11 @@ var toolMinRole = map[string]string{
 	"submit_inquiry":        "viewer",
 
 	// Breeding
-	"list_breeding_stock":   "viewer",
-	"book_breeding":         "manager",
-	"get_pregnancy_status":  "viewer",
-	"list_foals":            "viewer",
-	"recommend_bloodline":   "viewer",
+	"list_breeding_stock":  "viewer",
+	"book_breeding":        "manager",
+	"get_pregnancy_status": "viewer",
+	"list_foals":           "viewer",
+	"recommend_bloodline":  "viewer",
 }
 
 // roleHierarchy converts string roles to numerical ranks for validation
