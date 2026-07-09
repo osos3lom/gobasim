@@ -19,20 +19,55 @@ const confirmationTTL = 10 * time.Minute
 // newly added tool can never silently bypass confirmation.
 var toolRisk = map[string]string{
 	// operations
-	"get_horse":          "low",
-	"get_care_plan":      "low",
-	"list_tasks":         "low",
-	"update_task_status": "medium",
+	"get_horse":             "low",
+	"get_care_plan":         "low",
+	"list_tasks":            "low",
+	"update_task_status":    "medium",
+	"list_horses":           "low",
+	"list_stalls":           "low",
+	"get_stall_availability": "low",
+	"assign_stall":          "medium",
+	"register_horse":        "medium",
+	"check_in_horse":        "medium",
+	"check_out_horse":       "medium",
+	"report_incident":       "medium",
+	"list_incidents":        "low",
+	"book_vet_appointment":  "medium",
+	"record_treatment_plan": "medium",
+
 	// accounting — financial writes are always high
 	"list_invoices":  "low",
 	"get_invoice":    "low",
 	"record_expense": "high",
 	"record_payment": "high",
+
 	// administration
 	"list_clients":   "low",
 	"get_client":     "low",
 	"list_contracts": "low",
 	"get_contract":   "low",
+
+	// client self-service (all reads are low)
+	"list_my_horses":    "low",
+	"get_my_horse":      "low",
+	"list_my_invoices":  "low",
+	"get_my_balance":    "low",
+	"get_my_statement":  "low",
+	"list_my_contracts": "low",
+
+	// sales
+	"list_available_horses": "low",
+	"list_available_stalls": "low",
+	"list_packages":         "low",
+	"book_tour":             "medium",
+	"submit_inquiry":        "medium",
+
+	// breeding
+	"list_breeding_stock":  "low",
+	"book_breeding":        "medium",
+	"get_pregnancy_status": "low",
+	"list_foals":           "low",
+	"recommend_bloodline":  "low",
 }
 
 func riskOf(toolID string) string {

@@ -122,36 +122,66 @@
         </div>
 
         <!-- WhatsApp Contacts list (Right 1 col) -->
-        <div class="glass rounded-2xl border border-indigo-950/40 overflow-hidden flex flex-col">
+        <div class="glass rounded-2xl border border-indigo-950/40 overflow-hidden flex flex-col h-[500px]">
             <div class="p-6 border-b border-indigo-950/50 shrink-0">
                 <h3 class="font-bold text-white text-lg">Mapped WhatsApp Contacts</h3>
             </div>
-            <div class="p-4 divide-y divide-indigo-950/30 overflow-y-auto flex-1 space-y-4">
+            <div class="p-4 overflow-y-auto flex-1 space-y-4">
                 {{range .Contacts}}
-                <div class="flex items-center justify-between py-3 first:pt-0 last:pb-0">
-                    <div>
-                        <div class="font-semibold text-white text-sm">{{.Name}}</div>
-                        <div class="text-xs text-gray-400 mt-0.5">{{.ChatID}}</div>
-                        {{if .PromptOverride}}
-                        <div class="text-[10px] bg-slate-900 text-indigo-400 px-1.5 py-0.5 rounded border border-indigo-950 mt-1 inline-block">Prompt Override Set</div>
-                        {{end}}
-                    </div>
-                    <div class="flex flex-col items-end">
-                        {{if .Enabled}}
-                        <span class="text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-900 px-2 py-0.5 rounded-full font-bold">Enabled</span>
-                        {{else}}
-                        <span class="text-[10px] bg-gray-900 text-gray-400 border border-gray-800 px-2 py-0.5 rounded-full font-bold">Disabled</span>
-                        {{end}}
-                        <span class="text-xs text-gray-400 mt-1">{{if .AgentID}}{{.AgentID}}{{else}}default{{end}}</span>
-                    </div>
+                <div class="p-3 bg-slate-950/20 border border-indigo-950/40 rounded-xl space-y-3">
+                    <form hx-post="/dashboard/contacts/update" hx-swap="none" class="space-y-3">
+                        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                        <input type="hidden" name="chat_id" value="{{.ChatID}}">
+                        
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <div class="font-semibold text-white text-sm">{{.Name}}</div>
+                                <div class="text-[10px] text-gray-400 mt-0.5">{{.ChatID}}</div>
+                            </div>
+                            
+                            <!-- Enabled Toggle -->
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" name="enabled" value="true" class="sr-only peer" {{if .Enabled}}checked{{end}} onchange="this.form.dispatchEvent(new Event('submit'))">
+                                <div class="w-9 h-5 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
+                            </label>
+                        </div>
+                        
+                        <div class="grid grid-cols-2 gap-2 text-[10px]">
+                            <!-- AI Agent Select -->
+                            <div>
+                                <label class="block text-gray-400 mb-1">AI Agent</label>
+                                <select name="agent_id" onchange="this.form.dispatchEvent(new Event('submit'))"
+                                        class="w-full bg-slate-950 border border-indigo-950 focus:border-indigo-500 rounded-lg p-1 text-white outline-none">
+                                    <option value="default" {{if or (not .AgentID) (eq *.AgentID "default")}}selected{{end}}>Default (Operations)</option>
+                                    <option value="operations" {{if and .AgentID (eq *.AgentID "operations")}}selected{{end}}>Operations</option>
+                                    <option value="accounting" {{if and .AgentID (eq *.AgentID "accounting")}}selected{{end}}>Accounting</option>
+                                    <option value="administration" {{if and .AgentID (eq *.AgentID "administration")}}selected{{end}}>Administration</option>
+                                    <option value="sales" {{if and .AgentID (eq *.AgentID "sales")}}selected{{end}}>Sales</option>
+                                    <option value="breeding" {{if and .AgentID (eq *.AgentID "breeding")}}selected{{end}}>Breeding</option>
+                                    <option value="client" {{if and .AgentID (eq *.AgentID "client")}}selected{{end}}>Client Self-Service</option>
+                                </select>
+                            </div>
+                            
+                            <!-- Contact Type (Role) Select -->
+                            <div>
+                                <label class="block text-gray-400 mb-1">Contact Type</label>
+                                <select name="contact_type" onchange="this.form.dispatchEvent(new Event('submit'))"
+                                        class="w-full bg-slate-950 border border-indigo-950 focus:border-indigo-500 rounded-lg p-1 text-white outline-none">
+                                    <option value="client" {{if eq .ContactType "client"}}selected{{end}}>Client</option>
+                                    <option value="viewer" {{if or (not .ContactType) (eq .ContactType "viewer")}}selected{{end}}>Viewer</option>
+                                    <option value="manager" {{if eq .ContactType "manager"}}selected{{end}}>Manager</option>
+                                    <option value="admin" {{if eq .ContactType "admin"}}selected{{end}}>Admin</option>
+                                    <option value="super_admin" {{if eq .ContactType "super_admin"}}selected{{end}}>Super Admin</option>
+                                </select>
+                            </div>
+                        </div>
+                    </form>
                 </div>
                 {{else}}
                 <div class="text-center text-gray-400 text-sm py-8">
                     No contacts mapped. Enabled numbers will appear here.
                 </div>
                 {{end}}
-            </div>
-        </div>
     </div>
 
 </div>

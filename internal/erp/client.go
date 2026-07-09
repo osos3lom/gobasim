@@ -16,11 +16,12 @@ import (
 )
 
 type Identity struct {
-	UID         string   `json:"uid"`
-	Phone       string   `json:"phone"`
-	Role        string   `json:"role"`
-	DisplayName string   `json:"displayName"`
-	OrgIDs      []string `json:"orgIds"`
+	UID             string   `json:"uid"`
+	Phone           string   `json:"phone"`
+	Role            string   `json:"role"`
+	DisplayName     string   `json:"displayName"`
+	OrgIDs          []string `json:"orgIds"`
+	PhoneUnverified bool     `json:"phoneUnverified"`
 }
 
 type Client struct {
@@ -97,17 +98,24 @@ func (c *Client) ResolveIdentity(ctx context.Context, phone string) (*Identity, 
 	}
 
 	var responseStruct struct {
-		Resolved bool      `json:"resolved"`
-		Identity *Identity `json:"identity"`
+		Resolved        bool      `json:"resolved"`
+		Identity        *Identity `json:"identity"`
+		PhoneUnverified bool      `json:"phoneUnverified"`
 	}
 
 	if err := json.Unmarshal(respBytes, &responseStruct); err != nil {
 		return nil, fmt.Errorf("failed to decode response JSON: %w", err)
 	}
 
-	if !responseStruct.Resolved || responseStruct.Identity == nil {
+	if !responseStruct.Resolved {
 		return nil, nil // Unlinked
 	}
+
+	if responseStruct.Identity == nil {
+		return nil, nil
+	}
+
+	responseStruct.Identity.PhoneUnverified = responseStruct.PhoneUnverified
 
 	return responseStruct.Identity, nil
 }

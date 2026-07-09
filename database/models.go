@@ -86,6 +86,7 @@ type WaContact struct {
 	Enabled        bool      `json:"enabled"`
 	AgentID        *string   `json:"agent_id"`
 	PromptOverride *string   `json:"prompt_override"`
+	ContactType    string    `json:"contact_type"`
 	UpdatedAt      time.Time `json:"updated_at"`
 }
 

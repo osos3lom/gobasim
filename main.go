@@ -331,11 +331,21 @@ func handleIncomingMessage(
 		return
 	}
 
+	phone := strings.Split(evt.Info.Chat.String(), "@")[0]
+	var identity *erp.Identity
+	identity, err = erpClient.ResolveIdentity(ctx, phone)
+	if err != nil {
+		monitor.ReportError(ctx, "identity", err)
+	}
+
 	// Look up contact in wa_contacts to verify if they are enabled
 	contact, err := queries.GetWaContact(ctx, evt.Info.Chat.String())
 	if err != nil {
-		// Contact does not exist yet. Auto-create them as enabled:
-		phone := strings.Split(evt.Info.Chat.String(), "@")[0]
+		// Contact does not exist yet. Enable verified staff/clients, disable unverified/unknown ones.
+		enabled := false
+		if identity != nil && !identity.PhoneUnverified {
+			enabled = true
+		}
 		name := evt.Info.PushName
 		if name == "" {
 			name = phone
@@ -343,17 +353,21 @@ func handleIncomingMessage(
 		contact, err = queries.CreateOrUpdateWaContact(ctx, database.CreateOrUpdateWaContactParams{
 			ChatID:         evt.Info.Chat.String(),
 			Name:           name,
-			Enabled:        true, // Default to true
+			Enabled:        enabled,
 			AgentID:        nil,
 			PromptOverride: nil,
+			ContactType:    "viewer", // Default role
 		})
 		if err != nil {
 			trace.Logf(ctx, "Inbound: Warning: Failed to auto-create contact %s: %v", evt.Info.Chat.String(), err)
 		} else {
-			trace.Logf(ctx, "Inbound: Auto-created new contact in database: %s (%s)", contact.Name, contact.ChatID)
+			trace.Logf(ctx, "Inbound: Auto-created new contact in database: %s (%s, enabled=%t)", contact.Name, contact.ChatID, contact.Enabled)
 		}
-	} else if !contact.Enabled {
-		// Drop message processing if contact is explicitly disabled
+	}
+
+	if !contact.Enabled {
+		// Send unapproved warning reply to the user
+		sendTextReply(ctx, client, evt.Info.Chat, "هذا الرقم غير مفعل بعد. يرجى الطلب من الإدارة تفعيل رقمك وتحديد دورك في النظام.\nThis number is not approved yet. Please ask an admin to enable it in the dashboard.")
 		trace.Logf(ctx, "Inbound: Discarding message from disabled contact %s (%s)", contact.Name, contact.ChatID)
 		return
 	}
@@ -423,12 +437,21 @@ func handleIncomingMessage(
 		return
 	}
 
-	// 2. Resolve Actor Identity from Phone JID
-	var identity *erp.Identity
-	phone := strings.Split(evt.Info.Chat.String(), "@")[0]
-	identity, err = erpClient.ResolveIdentity(ctx, phone)
-	if err != nil {
-		monitor.ReportError(ctx, "identity", err)
+	// 2. Resolve Actor Identity from Phone JID & apply overrides
+	if identity == nil {
+		identity = &erp.Identity{
+			UID:    "guest-" + phone,
+			Phone:  phone,
+			Role:   contact.ContactType,
+			OrgIDs: []string{"default"},
+		}
+	} else {
+		if contact.ContactType != "" {
+			identity.Role = contact.ContactType
+		}
+		if len(identity.OrgIDs) == 0 {
+			identity.OrgIDs = []string{"default"}
+		}
 	}
 
 	// 3. Load conversation memory, then invoke the workflow with real history

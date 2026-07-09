@@ -21,6 +21,7 @@ type Querier interface {
 	UpdateAgentWorkflow(ctx context.Context, arg UpdateAgentWorkflowParams) (Agent, error)
 	GetWaContact(ctx context.Context, chatID string) (WaContact, error)
 	CreateOrUpdateWaContact(ctx context.Context, arg CreateOrUpdateWaContactParams) (WaContact, error)
+	UpdateWaContactSettings(ctx context.Context, arg UpdateWaContactSettingsParams) (WaContact, error)
 	ListWaContacts(ctx context.Context) ([]WaContact, error)
 	CreateWaActivity(ctx context.Context, arg CreateWaActivityParams) error
 	ListRecentWaActivity(ctx context.Context, limit int32) ([]WaActivity, error)

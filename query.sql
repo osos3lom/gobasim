@@ -71,11 +71,17 @@ SELECT * FROM wa_contacts
 WHERE chat_id = $1 LIMIT 1;
 
 -- name: CreateOrUpdateWaContact :one
-INSERT INTO wa_contacts (chat_id, name, enabled, agent_id, prompt_override, updated_at)
-VALUES ($1, $2, $3, $4, $5, NOW())
+INSERT INTO wa_contacts (chat_id, name, enabled, agent_id, prompt_override, contact_type, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, NOW())
 ON CONFLICT (chat_id) DO UPDATE
 SET name = EXCLUDED.name, enabled = EXCLUDED.enabled, agent_id = EXCLUDED.agent_id, 
-    prompt_override = EXCLUDED.prompt_override, updated_at = NOW()
+    prompt_override = EXCLUDED.prompt_override, contact_type = EXCLUDED.contact_type, updated_at = NOW()
+RETURNING *;
+
+-- name: UpdateWaContactSettings :one
+UPDATE wa_contacts
+SET enabled = $2, agent_id = $3, contact_type = $4, updated_at = NOW()
+WHERE chat_id = $1
 RETURNING *;
 
 -- name: ListWaContacts :many

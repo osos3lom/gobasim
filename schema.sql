@@ -82,6 +82,7 @@ CREATE TABLE IF NOT EXISTS wa_contacts (
     enabled BOOLEAN NOT NULL DEFAULT FALSE,
     agent_id TEXT,
     prompt_override TEXT,
+    contact_type TEXT NOT NULL DEFAULT 'viewer',
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -138,3 +139,6 @@ CREATE INDEX IF NOT EXISTS idx_tts_history_ts ON tts_history (ts DESC);
 CREATE INDEX IF NOT EXISTS idx_stt_history_ts ON stt_history (ts DESC);
 CREATE INDEX IF NOT EXISTS idx_wa_contacts_updated ON wa_contacts (updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_wa_activity_ts ON wa_activity (ts DESC);
+
+-- Idempotent column addition for existing tables
+ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS contact_type TEXT NOT NULL DEFAULT 'viewer';

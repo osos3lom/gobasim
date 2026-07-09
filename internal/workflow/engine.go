@@ -234,6 +234,8 @@ func (e *WorkflowEngine) ClassifyIntent(ctx context.Context, state *State) error
 		"operations = horses, stalls, tasks, health, vet, inventory\n" +
 		"accounting = invoices, bills, payments, financial reports\n" +
 		"administration = clients, contracts, scheduling, documents\n" +
+		"sales = available horses or stalls, service packages, tour bookings, CRM inquiries\n" +
+		"breeding = stallion/mare breeding bookings, pregnancy status, foals, bloodlines\n" +
 		"other = greetings, small talk, anything unrelated to the stable"
 
 	messages := []Message{
@@ -255,7 +257,7 @@ func (e *WorkflowEngine) ClassifyIntent(ctx context.Context, state *State) error
 
 	// Validate intent
 	switch intent {
-	case "operations", "accounting", "administration", "other":
+	case "operations", "accounting", "administration", "sales", "breeding", "other":
 		state.Intent = intent
 	default:
 		state.Intent = "operations" // Safe default
@@ -273,6 +275,12 @@ func (e *WorkflowEngine) Execute(ctx context.Context, state *State) error {
 		return nil
 	}
 
+	// Route client role directly to clientAgent bypassing intent classification
+	if state.ActorIdentity != nil && strings.ToLower(state.ActorIdentity.Role) == "client" {
+		trace.Logf(ctx, "[workflow] Client role detected. Routing directly to clientAgent tool loop.")
+		return e.executeToolLoop(ctx, state, clientAgent)
+	}
+
 	// 1. Classify Intent
 	if err := e.ClassifyIntent(ctx, state); err != nil {
 		return err
@@ -286,6 +294,10 @@ func (e *WorkflowEngine) Execute(ctx context.Context, state *State) error {
 		return e.executeToolLoop(ctx, state, accountingAgent)
 	case "administration":
 		return e.executeToolLoop(ctx, state, administrationAgent)
+	case "sales":
+		return e.executeToolLoop(ctx, state, salesAgent)
+	case "breeding":
+		return e.executeToolLoop(ctx, state, breedingAgent)
 	default: // other / small talk
 		return e.executeGeneralChat(ctx, state)
 	}
@@ -347,8 +359,17 @@ func (e *WorkflowEngine) executeToolLoop(ctx context.Context, state *State, spec
 	}
 	orgID := state.ActorIdentity.OrgIDs[0]
 
-	systemPrompt := e.resolveSystemPrompt(ctx, state.ChatID, spec.DefaultPrompt)
-	tools := spec.Tools
+	var allowedTools []ToolDefinition
+	for _, t := range spec.Tools {
+		minRole := getMinRoleForTool(t.Function.Name)
+		if hasRole(state.ActorIdentity.Role, minRole) {
+			allowedTools = append(allowedTools, t)
+		}
+	}
+	var tools []ToolDefinition
+	if len(allowedTools) > 0 {
+		tools = allowedTools
+	}
 
 	if state.Summary != "" {
 		systemPrompt += "\n\nSummary of the conversation so far:\n" + state.Summary

@@ -1,7 +1,11 @@
 package web
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"io"
@@ -14,12 +18,16 @@ import (
 	"sawt-go/internal/monitor"
 	"sawt-go/internal/ratelimit"
 	waClient "sawt-go/internal/whatsmeow"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"go.mau.fi/whatsmeow/binary/proto"
+	"go.mau.fi/whatsmeow/types"
+	googleProto "google.golang.org/protobuf/proto"
 )
 
 // TemplatesFS holds embedded HTML template files.
@@ -81,6 +89,9 @@ func (s *Server) GetRouter() chi.Router {
 	r.With(s.requireCSRF).Post("/login", s.handlePostLogin)
 	r.Get("/logout", s.handleLogout)
 
+	// Webhook endpoint (public)
+	r.Post("/webhook/events", s.handleWebhookEvents)
+
 	// Protected routes
 	r.Group(func(r chi.Router) {
 		r.Use(s.auth.RequireAuth)
@@ -92,6 +103,7 @@ func (s *Server) GetRouter() chi.Router {
 		r.Get("/dashboard/logs", s.handleGetLogsPage)
 		r.Get("/dashboard/workflows", s.handleGetWorkflowsPage)
 		r.With(s.requireCSRF).Post("/dashboard/workflows/update", s.handlePostUpdateWorkflow)
+		r.With(s.requireCSRF).Post("/dashboard/contacts/update", s.handlePostContactUpdate)
 		r.Get("/dashboard/whatsapp/status", s.handleGetWhatsAppStatus)
 		r.With(s.requireCSRF).Post("/dashboard/whatsapp/pair-code", s.handlePostWhatsAppPairCode)
 
@@ -389,4 +401,125 @@ func (b *LogBroker) Write(p []byte) (n int, err error) {
 		// Drop log lines if channel is full to prevent daemon deadlock
 	}
 	return len(p), nil
+}
+
+func (s *Server) handlePostContactUpdate(w http.ResponseWriter, r *http.Request) {
+	chatID := r.FormValue("chat_id")
+	if chatID == "" {
+		http.Error(w, "chat_id is required", http.StatusBadRequest)
+		return
+	}
+
+	enabled := r.FormValue("enabled") == "true"
+	agentIDVal := r.FormValue("agent_id")
+	contactType := r.FormValue("contact_type")
+
+	var agentID *string
+	if agentIDVal != "" && agentIDVal != "default" {
+		agentID = &agentIDVal
+	}
+
+	_, err := s.queries.UpdateWaContactSettings(r.Context(), database.UpdateWaContactSettingsParams{
+		ChatID:      chatID,
+		Enabled:     enabled,
+		AgentID:     agentID,
+		ContactType: contactType,
+	})
+	if err != nil {
+		log.Printf("Failed to update contact settings for %s: %v", chatID, err)
+		http.Error(w, "Failed to update contact settings", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+type WebhookEvent struct {
+	EventType string                 `json:"eventType"`
+	Phone     string                 `json:"phone"`
+	Payload   map[string]interface{} `json:"payload"`
+}
+
+func (s *Server) handleWebhookEvents(w http.ResponseWriter, r *http.Request) {
+	sig := r.Header.Get("x-swa-signature")
+	tsStr := r.Header.Get("x-swa-timestamp")
+
+	if sig == "" || tsStr == "" {
+		http.Error(w, "Unauthorized: missing signature headers", http.StatusUnauthorized)
+		return
+	}
+
+	// Validate timestamp skew (±5 minutes)
+	timestamp, err := strconv.ParseInt(tsStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Unauthorized: invalid timestamp", http.StatusUnauthorized)
+		return
+	}
+	nowMs := time.Now().UnixMilli()
+	diff := nowMs - timestamp
+	if diff < -300000 || diff > 300000 {
+		http.Error(w, "Unauthorized: timestamp skew too large", http.StatusUnauthorized)
+		return
+	}
+
+	// Read body bytes
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+
+	// Validate signature
+	expectedSig := computeSignature(s.cfg.AgentGatewaySecret, tsStr, string(bodyBytes))
+	if !hmac.Equal([]byte(sig), []byte(expectedSig)) {
+		http.Error(w, "Unauthorized: signature mismatch", http.StatusUnauthorized)
+		return
+	}
+
+	// Parse event
+	var event WebhookEvent
+	if err := json.Unmarshal(bodyBytes, &event); err != nil {
+		http.Error(w, "Bad Request: invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	// Ensure whatsmeow client is connected
+	if s.waMgr.Client == nil || !s.waMgr.Client.IsConnected() {
+		http.Error(w, "Service Unavailable: WhatsApp not connected", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Determine notification message
+	var messageText string
+	switch event.EventType {
+	case "payment_reminder":
+		messageText = "تذكير: لديك فاتورة مستحقة الدفع. يرجى مراجعة الحساب.\nReminder: You have an outstanding invoice due. Please check your account."
+	case "task_overdue_alert":
+		messageText = "تنبيه: هناك مهمة متأخرة لم يتم إنجازها بعد.\nAlert: There is an overdue task that requires your attention."
+	case "appointment_reminder":
+		messageText = "تذكير: لديك موعد مجدول قريباً.\nReminder: You have an upcoming scheduled appointment."
+	default:
+		messageText = "تنبيه جديد من نظام صوت.\nNew notification from Sawt."
+	}
+
+	// Send message via WhatsApp
+	jid := types.NewJID(event.Phone, types.DefaultUserServer)
+	textMsg := &proto.Message{
+		Conversation: googleProto.String(messageText),
+	}
+	_, err = s.waMgr.Client.SendMessage(r.Context(), jid, textMsg)
+	if err != nil {
+		log.Printf("Failed to send webhook notification to %s: %v", event.Phone, err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"ok":true}`))
+}
+
+func computeSignature(secret, timestamp, body string) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(timestamp + "." + body))
+	return hex.EncodeToString(mac.Sum(nil))
 }
