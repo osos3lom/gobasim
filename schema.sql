@@ -129,9 +129,19 @@ CREATE TABLE IF NOT EXISTS pending_confirmations (
     org_id TEXT NOT NULL,
     acting_user_uid TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
+    -- status gates the atomic claim: a row is 'pending' until exactly one
+    -- resolver flips it to 'executing' (see ClaimPendingConfirmation). This
+    -- prevents two concurrent "yes" replies from both executing the same
+    -- (financial) tool. claimed_at records when that happened.
+    status TEXT NOT NULL DEFAULT 'pending',
+    claimed_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     expires_at TIMESTAMPTZ NOT NULL
 );
+-- Idempotent migration for deployments created before the status/claimed_at
+-- columns existed (schema bootstrap runs on every start).
+ALTER TABLE pending_confirmations ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending';
+ALTER TABLE pending_confirmations ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ;
 
 -- Message-browsing store for the dashboard's Messages tab: every message
 -- sent/received while this instance is running, distinct from wa_activity

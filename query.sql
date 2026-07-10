@@ -160,17 +160,28 @@ ON CONFLICT (chat_id) DO UPDATE
 SET summary = EXCLUDED.summary, summarized_through = EXCLUDED.summarized_through, updated_at = NOW();
 
 -- name: UpsertPendingConfirmation :exec
-INSERT INTO pending_confirmations (chat_id, tool_id, args, org_id, acting_user_uid, description, created_at, expires_at)
-VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7)
+INSERT INTO pending_confirmations (chat_id, tool_id, args, org_id, acting_user_uid, description, status, claimed_at, created_at, expires_at)
+VALUES ($1, $2, $3, $4, $5, $6, 'pending', NULL, NOW(), $7)
 ON CONFLICT (chat_id) DO UPDATE
 SET tool_id = EXCLUDED.tool_id, args = EXCLUDED.args, org_id = EXCLUDED.org_id,
     acting_user_uid = EXCLUDED.acting_user_uid, description = EXCLUDED.description,
+    status = 'pending', claimed_at = NULL,
     created_at = NOW(), expires_at = EXCLUDED.expires_at;
 
 -- name: GetPendingConfirmation :one
 SELECT chat_id, tool_id, args, org_id, acting_user_uid, description, created_at, expires_at
 FROM pending_confirmations
 WHERE chat_id = $1;
+
+-- ClaimPendingConfirmation atomically transitions a chat's pending row to
+-- 'executing' and returns it. Because the UPDATE matches only status='pending',
+-- exactly one of two concurrent resolvers wins the row; the loser gets no row.
+-- This is the guard against double-executing a confirmed (financial) tool.
+-- name: ClaimPendingConfirmation :one
+UPDATE pending_confirmations
+SET status = 'executing', claimed_at = NOW()
+WHERE chat_id = $1 AND status = 'pending'
+RETURNING chat_id, tool_id, args, org_id, acting_user_uid, description, created_at, expires_at;
 
 -- name: DeletePendingConfirmation :exec
 DELETE FROM pending_confirmations WHERE chat_id = $1;

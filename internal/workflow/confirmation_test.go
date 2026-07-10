@@ -41,6 +41,21 @@ func (f *confirmFakeQuerier) GetPendingConfirmation(ctx context.Context, chatID 
 	return *f.pending, nil
 }
 
+// ClaimPendingConfirmation models Postgres's atomic single-winner claim: it
+// returns the row exactly once and consumes it, so a second concurrent claim
+// (the double-affirmation race) gets "no rows". f.mu makes the check-and-take
+// indivisible.
+func (f *confirmFakeQuerier) ClaimPendingConfirmation(ctx context.Context, chatID string) (database.PendingConfirmation, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.pending == nil || f.pending.ChatID != chatID {
+		return database.PendingConfirmation{}, fmt.Errorf("no rows")
+	}
+	claimed := *f.pending
+	f.pending = nil
+	return claimed, nil
+}
+
 func (f *confirmFakeQuerier) DeletePendingConfirmation(ctx context.Context, chatID string) error {
 	f.pending = nil
 	return nil

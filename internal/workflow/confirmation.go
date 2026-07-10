@@ -2,6 +2,8 @@ package workflow
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"sawt-go/database"
@@ -149,16 +151,25 @@ func (e *WorkflowEngine) resolvePendingConfirmation(ctx context.Context, state *
 		return false, nil
 	}
 
-	pending, err := e.queries.GetPendingConfirmation(ctx, state.ChatID)
+	// Atomically claim the pending row (pending -> executing). Two concurrent
+	// affirmations for the same chat (each its own inbound goroutine) can never
+	// both execute the confirmed tool: exactly one caller matches status =
+	// 'pending' and wins the row; the other gets no row and falls through. This
+	// is the guard against double-posting a payment. Once claimed the row is
+	// terminal, so we always delete it when done — but only AFTER CallTool, so a
+	// crash mid-execution leaves a visible 'executing' row instead of silently
+	// dropping the action (the old delete-before-execute lost it).
+	pending, err := e.queries.ClaimPendingConfirmation(ctx, state.ChatID)
 	if err != nil {
-		// No pending row — the common case.
+		// No claimable row: nothing pending, or a concurrent goroutine already
+		// claimed it. Either way this message isn't a confirmation.
 		return false, nil
 	}
+	defer func() { _ = e.queries.DeletePendingConfirmation(ctx, state.ChatID) }()
 
 	// Expired confirmations are cancelled silently; the new message is then
 	// processed as a fresh request.
 	if time.Now().After(pending.ExpiresAt) {
-		_ = e.queries.DeletePendingConfirmation(ctx, state.ChatID)
 		state.ToolResults = append(state.ToolResults, map[string]interface{}{
 			"tool":   pending.ToolID,
 			"output": map[string]interface{}{"status": "confirmation_expired"},
@@ -175,10 +186,6 @@ func (e *WorkflowEngine) resolvePendingConfirmation(ctx context.Context, state *
 		}
 	}
 
-	if err := e.queries.DeletePendingConfirmation(ctx, state.ChatID); err != nil {
-		return false, fmt.Errorf("failed to clear pending confirmation: %w", err)
-	}
-
 	if !isAffirmation(lastUserText) {
 		state.ToolResults = append(state.ToolResults, map[string]interface{}{
 			"tool":   pending.ToolID,
@@ -192,6 +199,16 @@ func (e *WorkflowEngine) resolvePendingConfirmation(ctx context.Context, state *
 	var args map[string]interface{}
 	if err := json.Unmarshal(pending.Args, &args); err != nil {
 		args = map[string]interface{}{}
+	}
+
+	// If the tool contract carries an idempotency key (the model was asked to
+	// invent one for financial writes), replace it with a deterministic value
+	// tied to this confirmed action, so a retry or WhatsApp redelivery of the
+	// "yes" cannot double-post. We only override an existing key — never add the
+	// field to tools that don't declare it. This is defense-in-depth alongside
+	// the atomic claim above and the idempotency header the ERP client sends.
+	if _, ok := args["idempotencyKey"]; ok {
+		args["idempotencyKey"] = deterministicIdemKey(state.ChatID, pending.ToolID, pending.Args)
 	}
 
 	result, err := e.erpClient.CallTool(ctx, pending.ToolID, pending.OrgID, pending.ActingUserUid, args)
@@ -218,4 +235,13 @@ func (e *WorkflowEngine) resolvePendingConfirmation(ctx context.Context, state *
 
 	trace.Logf(ctx, "[workflow] Confirmed action '%s' executed on chat %s", pending.ToolID, state.ChatID)
 	return true, nil
+}
+
+// deterministicIdemKey derives a stable idempotency key for a confirmed action
+// from its chat, tool, and exact stored args. It is identical across retries and
+// redeliveries of the same action, so the ERP gateway can dedup, but differs for
+// a genuinely new request (different args), which is left free to proceed.
+func deterministicIdemKey(chatID, toolID string, rawArgs []byte) string {
+	sum := sha256.Sum256([]byte(chatID + "|" + toolID + "|" + string(rawArgs)))
+	return hex.EncodeToString(sum[:16])
 }

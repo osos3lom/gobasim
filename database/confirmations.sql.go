@@ -17,11 +17,12 @@ type UpsertPendingConfirmationParams struct {
 }
 
 const upsertPendingConfirmation = `-- name: UpsertPendingConfirmation :exec
-INSERT INTO pending_confirmations (chat_id, tool_id, args, org_id, acting_user_uid, description, created_at, expires_at)
-VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7)
+INSERT INTO pending_confirmations (chat_id, tool_id, args, org_id, acting_user_uid, description, status, claimed_at, created_at, expires_at)
+VALUES ($1, $2, $3, $4, $5, $6, 'pending', NULL, NOW(), $7)
 ON CONFLICT (chat_id) DO UPDATE
 SET tool_id = EXCLUDED.tool_id, args = EXCLUDED.args, org_id = EXCLUDED.org_id,
     acting_user_uid = EXCLUDED.acting_user_uid, description = EXCLUDED.description,
+    status = 'pending', claimed_at = NULL,
     created_at = NOW(), expires_at = EXCLUDED.expires_at
 `
 
@@ -42,6 +43,33 @@ WHERE chat_id = $1
 
 func (q *Queries) GetPendingConfirmation(ctx context.Context, chatID string) (PendingConfirmation, error) {
 	row := q.db.QueryRow(ctx, getPendingConfirmation, chatID)
+	var i PendingConfirmation
+	err := row.Scan(
+		&i.ChatID,
+		&i.ToolID,
+		&i.Args,
+		&i.OrgID,
+		&i.ActingUserUid,
+		&i.Description,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
+// -- ClaimPendingConfirmation --
+const claimPendingConfirmation = `-- name: ClaimPendingConfirmation :one
+UPDATE pending_confirmations
+SET status = 'executing', claimed_at = NOW()
+WHERE chat_id = $1 AND status = 'pending'
+RETURNING chat_id, tool_id, args, org_id, acting_user_uid, description, created_at, expires_at
+`
+
+// ClaimPendingConfirmation atomically flips a chat's pending row to 'executing'
+// and returns it. Only one of two concurrent callers can match status='pending',
+// so the confirmed tool is executed at most once (pgx.ErrNoRows for the loser).
+func (q *Queries) ClaimPendingConfirmation(ctx context.Context, chatID string) (PendingConfirmation, error) {
+	row := q.db.QueryRow(ctx, claimPendingConfirmation, chatID)
 	var i PendingConfirmation
 	err := row.Scan(
 		&i.ChatID,

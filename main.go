@@ -26,6 +26,7 @@ import (
 	"sawt-go/web"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -154,10 +155,34 @@ func main() {
 	// 3. Initialize WhatsApp Connection Manager
 	waMgr := waClient.NewWhatsAppManager(cfg.DatabaseURL)
 
+	// inflightWG tracks every in-flight message handler so shutdown can drain
+	// them (letting mid-flight ERP writes finish). inflightSem caps how many
+	// run concurrently — global backpressure on top of the per-chat limiter.
+	// A non-positive cap would make the semaphore unbuffered and deadlock every
+	// handler, so fall back to a sane default.
+	maxInflight := cfg.MaxInflight
+	if maxInflight < 1 {
+		maxInflight = 32
+	}
+	var inflightWG sync.WaitGroup
+	inflightSem := make(chan struct{}, maxInflight)
+
 	err = waMgr.Initialize(ctx, func(evt interface{}) {
 		switch v := evt.(type) {
 		case *events.Message:
-			go handleIncomingMessage(ctx, waMgr.Client, v, queries, sttOrch, ttsOrch, erpClient, wfEngine, voiceStore)
+			inflightWG.Add(1)
+			go func(msg *events.Message) {
+				defer inflightWG.Done()
+				// Acquire a slot here (not before launch) so the whatsmeow event
+				// loop is never blocked; bail out if we are already shutting down.
+				select {
+				case inflightSem <- struct{}{}:
+					defer func() { <-inflightSem }()
+				case <-ctx.Done():
+					return
+				}
+				handleIncomingMessage(ctx, waMgr.Client, msg, queries, sttOrch, ttsOrch, erpClient, wfEngine, voiceStore)
+			}(v)
 		case *events.Connected:
 			waMgr.SetState(waClient.StateConnected, "", "")
 			log.Println("WhatsApp connection established.")
@@ -223,12 +248,20 @@ func main() {
 	webServer.SetVoiceStore(voiceStore) // nil-safe: no-ops when archival is disabled
 	router := webServer.GetRouter()
 
+	// The server handle is declared here (not inside the goroutine) so the
+	// signal handler below can gracefully Shutdown() it. WriteTimeout is left at
+	// 0 because /api/logs streams Server-Sent Events on a long-lived connection;
+	// ReadHeaderTimeout/ReadTimeout/IdleTimeout still guard against slow-client
+	// (Slowloris-style) connection exhaustion.
+	server := &http.Server{
+		Addr:              ":" + cfg.Port,
+		Handler:           router,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
 	go func() {
 		log.Printf("Web Dashboard serving at http://localhost:%s\n", cfg.Port)
-		server := &http.Server{
-			Addr:    ":" + cfg.Port,
-			Handler: router,
-		}
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Printf("Web server error: %v", err)
 		}
@@ -240,7 +273,34 @@ func main() {
 	<-c
 
 	log.Println("Shutting down daemon gracefully...")
+
+	// 1. Stop accepting new dashboard requests. Give in-flight HTTP requests a
+	//    short grace period, then force-close (the SSE stream never goes idle).
+	httpCtx, httpCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	if err := server.Shutdown(httpCtx); err != nil {
+		log.Printf("HTTP graceful shutdown incomplete (%v) — forcing close.", err)
+		_ = server.Close()
+	}
+	httpCancel()
+
+	// 2. Stop new inbound WhatsApp messages from being dispatched.
 	waMgr.Client.Disconnect()
+
+	// 3. Drain in-flight message handlers (bounded) so mid-flight ERP writes
+	//    finish before we cancel their context and close the DB pool.
+	drained := make(chan struct{})
+	go func() { inflightWG.Wait(); close(drained) }()
+	select {
+	case <-drained:
+		log.Println("In-flight message handlers drained.")
+	case <-time.After(25 * time.Second):
+		log.Println("Shutdown drain timeout reached — proceeding with handlers still active.")
+	}
+
+	// 4. Cancel background workers (retention, voice worker, summarizers) and let
+	//    the deferred pool.Close() run. cancel() also unblocks any handler still
+	//    parked on the inflight semaphore.
+	cancel()
 	log.Println("Shutdown complete.")
 }
 

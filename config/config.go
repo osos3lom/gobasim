@@ -34,6 +34,11 @@ type Config struct {
 	ErrorWebhookURL    string
 	RetentionDays      int
 
+	// MaxInflight bounds how many inbound WhatsApp messages may be in the
+	// STT/LLM/ERP pipeline concurrently. It is the global backpressure cap
+	// that complements the per-chat inbound rate limiter.
+	MaxInflight int
+
 	// Voice-note archival to Firebase Cloud Storage (a GCS bucket).
 	// Empty VoiceStorageBucket disables the feature entirely.
 	VoiceStorageBucket string
@@ -132,6 +137,7 @@ func LoadConfig() *Config {
 		LlmFallbackModel:   llmFallbackModel,
 		ErrorWebhookURL:    os.Getenv("ERROR_WEBHOOK_URL"),
 		RetentionDays:      GetEnvInt("RETENTION_DAYS", 90),
+		MaxInflight:        GetEnvInt("MAX_INFLIGHT", 32),
 		VoiceStorageBucket: os.Getenv("VOICE_STORAGE_BUCKET"),
 		VoiceStoragePrefix: getEnvDefault("VOICE_STORAGE_PREFIX", "voice-notes"),
 		VoiceSpoolDir:      getEnvDefault("VOICE_SPOOL_DIR", "voice-spool"),

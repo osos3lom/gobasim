@@ -36,6 +36,7 @@ type Querier interface {
 	UpsertConversationState(ctx context.Context, arg UpsertConversationStateParams) error
 	UpsertPendingConfirmation(ctx context.Context, arg UpsertPendingConfirmationParams) error
 	GetPendingConfirmation(ctx context.Context, chatID string) (PendingConfirmation, error)
+	ClaimPendingConfirmation(ctx context.Context, chatID string) (PendingConfirmation, error)
 	DeletePendingConfirmation(ctx context.Context, chatID string) error
 	PurgeSttHistoryBefore(ctx context.Context, cutoff time.Time) error
 	PurgeTtsHistoryBefore(ctx context.Context, cutoff time.Time) error
