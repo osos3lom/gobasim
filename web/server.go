@@ -6,14 +6,17 @@ import (
 	"embed"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"io"
 	"io/fs"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
+	"runtime"
 	"sawt-go/config"
 	"sawt-go/database"
 	"sawt-go/internal/audio"
@@ -55,6 +58,12 @@ type Server struct {
 	ttsOrch      *speech.TTSOrchestrator
 	loginLimiter *ratelimit.Limiter
 	voiceStore   *voicenotes.Store // optional; nil disables archival
+	db           dbPinger          // optional; drives the /readyz DB probe
+}
+
+// dbPinger is the narrow slice of *pgxpool.Pool the readiness probe needs.
+type dbPinger interface {
+	Ping(context.Context) error
 }
 
 // SetVoiceStore attaches the (optional) voice-note archival store so
@@ -63,6 +72,12 @@ type Server struct {
 // and tests.
 func (s *Server) SetVoiceStore(store *voicenotes.Store) {
 	s.voiceStore = store
+}
+
+// SetDB attaches a DB handle for the /readyz readiness probe. Optional and
+// nil-safe (keeps NewServer's signature stable for tests/harness).
+func (s *Server) SetDB(p dbPinger) {
+	s.db = p
 }
 
 // NewServer wires up the dashboard's dependencies. ttsOrch is the same
@@ -81,9 +96,12 @@ func NewServer(cfg *config.Config, queries *database.Queries, waMgr *waClient.Wh
 	broker := NewLogBroker()
 	go broker.Start()
 
-	// Redirect log outputs to both stdout and our SSE broker
+	// Structured logging (C4): a slog logger — text, or JSON when LOG_FORMAT=json
+	// — writes to both stdout and the SSE broker so the dashboard log stream keeps
+	// working. The stdlib logger (used across the app + libraries) is bridged
+	// through slog at INFO, so every line is leveled/structured, not just new ones.
 	multiWriter := io.MultiWriter(os.Stdout, broker)
-	log.SetOutput(multiWriter)
+	configureLogging(multiWriter)
 
 	return &Server{
 		cfg:          cfg,
@@ -96,6 +114,86 @@ func NewServer(cfg *config.Config, queries *database.Queries, waMgr *waClient.Wh
 		ttsOrch:      ttsOrch,
 		loginLimiter: ratelimit.New(10, 5*time.Minute),
 	}
+}
+
+// configureLogging installs a slog default logger (text, or JSON when
+// LOG_FORMAT=json) writing to w, and bridges the stdlib logger through it so
+// existing log.Printf output is captured with a level + structure (C4).
+func configureLogging(w io.Writer) {
+	opts := &slog.HandlerOptions{Level: slog.LevelInfo}
+	var h slog.Handler
+	if strings.EqualFold(os.Getenv("LOG_FORMAT"), "json") {
+		h = slog.NewJSONHandler(w, opts)
+	} else {
+		h = slog.NewTextHandler(w, opts)
+	}
+	slog.SetDefault(slog.New(h))
+	log.SetFlags(0)
+	log.SetOutput(slogBridge{})
+}
+
+// slogBridge routes stdlib log output through slog at INFO. slog writes to the
+// configured sink (stdout + SSE broker), never back to the stdlib logger, so
+// there is no recursion.
+type slogBridge struct{}
+
+func (slogBridge) Write(p []byte) (int, error) {
+	slog.Default().Info(strings.TrimRight(string(p), "\n"))
+	return len(p), nil
+}
+
+// processStart anchors the /metrics uptime counter.
+var processStart = time.Now()
+
+func writeJSON(w http.ResponseWriter, status int, v interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+// handleHealthz is an unauthenticated liveness probe: 200 while the process is
+// serving. It does no I/O, so it stays green even if the DB is down.
+func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "ok"})
+}
+
+// handleReadyz is an unauthenticated readiness probe: it pings the DB and
+// reports WhatsApp link state, returning 503 when the DB is unreachable (C3).
+func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+
+	dbOK := true
+	if s.db != nil {
+		if err := s.db.Ping(ctx); err != nil {
+			dbOK = false
+		}
+	}
+	waState, _, _ := s.waMgr.GetStatus()
+
+	status := http.StatusOK
+	if !dbOK {
+		status = http.StatusServiceUnavailable
+	}
+	writeJSON(w, status, map[string]interface{}{
+		"ready":    dbOK,
+		"db":       dbOK,
+		"whatsapp": string(waState),
+	})
+}
+
+// handleMetrics is an unauthenticated, low-cardinality JSON metrics snapshot
+// (no new dependency). It exposes only non-sensitive process/pipeline counters.
+func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	waState, _, _ := s.waMgr.GetStatus()
+	vnUploaded, vnFailed := s.voiceStore.Stats() // nil-safe: returns 0,0
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"uptime_seconds":       int(time.Since(processStart).Seconds()),
+		"goroutines":           runtime.NumGoroutine(),
+		"whatsapp_state":       string(waState),
+		"voice_notes_uploaded": vnUploaded,
+		"voice_notes_failed":   vnFailed,
+	})
 }
 
 // renderTemplate executes templates and checks/logs execution errors
@@ -126,6 +224,7 @@ func (s *Server) GetRouter() chi.Router {
 	r := chi.NewRouter()
 
 	r.Use(middleware.RequestID)
+	r.Use(capturePeerIP) // must precede RealIP: records the true TCP peer (C5)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Logger)
 	r.Use(reportPanics)
@@ -138,6 +237,11 @@ func (s *Server) GetRouter() chi.Router {
 	r.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
 		s.renderError(w, http.StatusMethodNotAllowed, "That method isn't allowed on this route.")
 	})
+
+	// Unauthenticated health/metrics probes (C3) for uptime checks + LBs.
+	r.Get("/healthz", s.handleHealthz)
+	r.Get("/readyz", s.handleReadyz)
+	r.Get("/metrics", s.handleMetrics)
 
 	// Compiled Tailwind CSS + small JS helpers, embedded at build time.
 	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.FS(s.static))))
@@ -199,8 +303,35 @@ func clientIP(r *http.Request) string {
 	return host
 }
 
+type peerIPKeyType struct{}
+
+var peerIPKey peerIPKeyType
+
+// capturePeerIP records the real TCP peer address into the request context
+// before middleware.RealIP overwrites RemoteAddr from X-Forwarded-For. The login
+// limiter keys on this real peer so a spoofed X-Forwarded-For can't mint an
+// unlimited supply of fresh login buckets (C5).
+func capturePeerIP(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			host = r.RemoteAddr
+		}
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), peerIPKey, host)))
+	})
+}
+
+// peerIP returns the real TCP peer captured by capturePeerIP, falling back to
+// clientIP (the RealIP-resolved address) when unavailable.
+func peerIP(r *http.Request) string {
+	if v, ok := r.Context().Value(peerIPKey).(string); ok && v != "" {
+		return v
+	}
+	return clientIP(r)
+}
+
 func (s *Server) handlePostLogin(w http.ResponseWriter, r *http.Request) {
-	if allowed, _ := s.loginLimiter.Allow(clientIP(r)); !allowed {
+	if allowed, _ := s.loginLimiter.Allow(peerIP(r)); !allowed {
 		s.renderError(w, http.StatusTooManyRequests, "Too many login attempts — try again in a few minutes.")
 		return
 	}
@@ -524,7 +655,8 @@ func (s *Server) handlePostWhatsAppPairCode(w http.ResponseWriter, r *http.Reque
 
 	prettyCode, err := s.waMgr.RequestPairingCode(phone)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("web: pairing code request failed: %v", err)
+		http.Error(w, "Could not generate a pairing code — check the WhatsApp connection and try again.", http.StatusInternalServerError)
 		return
 	}
 
@@ -808,7 +940,8 @@ func (s *Server) handlePostCreateWorkflow(w http.ResponseWriter, r *http.Request
 		Skills:        []byte(`[]`),
 	})
 	if err != nil {
-		s.renderWorkflowsPage(w, r, fmt.Sprintf("Failed to create agent: %v", err))
+		log.Printf("web: failed to create agent %q: %v", name, err)
+		s.renderWorkflowsPage(w, r, "Failed to create the agent. Please try again.")
 		return
 	}
 
@@ -874,7 +1007,8 @@ func (s *Server) handlePostUpdateWorkflow(w http.ResponseWriter, r *http.Request
 
 	_, err = s.queries.UpdateAgentWorkflow(r.Context(), arg)
 	if err != nil {
-		w.Write([]byte(fmt.Sprintf("<div class='bg-red-900 border border-red-500 text-red-200 px-4 py-3 rounded'>Failed: %v</div>", err)))
+		log.Printf("web: failed to update agent workflow %q: %v", agentID, err)
+		w.Write([]byte("<div class='bg-red-900 border border-red-500 text-red-200 px-4 py-3 rounded'>Failed to update the workflow. Please try again.</div>"))
 		return
 	}
 

@@ -112,6 +112,24 @@ func describePendingAction(toolID string, args map[string]interface{}) string {
 // requestConfirmation stores the pending action and turns the reply into a
 // confirmation question instead of executing the tool.
 func (e *WorkflowEngine) requestConfirmation(ctx context.Context, state *State, toolID string, args map[string]interface{}) error {
+	// Single-slot guard (C7): don't silently overwrite a live pending confirmation
+	// for this chat. resolvePendingConfirmation normally clears any prior one
+	// before a genuinely new request reaches here; this guards the edge where two
+	// risky calls arrive in the same turn — the operator resolves the current one
+	// first rather than losing it.
+	if existing, err := e.queries.GetPendingConfirmation(ctx, state.ChatID); err == nil && time.Now().Before(existing.ExpiresAt) {
+		state.ToolResults = append(state.ToolResults, map[string]interface{}{
+			"tool":   toolID,
+			"args":   args,
+			"output": map[string]interface{}{"status": "confirmation_conflict"},
+		})
+		state.FinalReply = fmt.Sprintf(
+			"لديك عملية بانتظار التأكيد: %s. أرسل \"نعم\" لتأكيدها أو أي رد آخر لإلغائها قبل طلب عملية جديدة.",
+			existing.Description)
+		trace.Logf(ctx, "[workflow] Refusing to overwrite a pending confirmation on chat %s (existing '%s')", state.ChatID, existing.ToolID)
+		return nil
+	}
+
 	argsBytes, err := json.Marshal(args)
 	if err != nil {
 		return fmt.Errorf("failed to marshal pending args: %w", err)
@@ -222,6 +240,13 @@ func (e *WorkflowEngine) resolvePendingConfirmation(ctx context.Context, state *
 		"output": result,
 		"status": "confirmed_executed",
 	})
+
+	// Durable step log of the confirmed execution (C2).
+	confStatus := "confirmed"
+	if ok, _ := result["ok"].(bool); !ok {
+		confStatus = "error"
+	}
+	e.logToolExecution(ctx, state.ChatID, pending.ToolID, args, result, confStatus)
 
 	if ok, _ := result["ok"].(bool); ok {
 		state.FinalReply = fmt.Sprintf("تم: %s ✅", pending.Description)

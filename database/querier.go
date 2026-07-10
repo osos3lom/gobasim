@@ -42,6 +42,7 @@ type Querier interface {
 	PurgeTtsHistoryBefore(ctx context.Context, cutoff time.Time) error
 	PurgeConversationTurnsBefore(ctx context.Context, cutoff time.Time) error
 	RedactWaActivityBefore(ctx context.Context, cutoff time.Time) error
+	CreateToolExecution(ctx context.Context, arg CreateToolExecutionParams) error
 }
 
 var _ Querier = (*Queries)(nil)

@@ -99,6 +99,19 @@ type WorkflowEngine struct {
 	queries    database.Querier
 	complete   completionFn
 	providers  []llmProvider
+	// baseCtx is the app-lifetime context background workers (the rolling
+	// summarizer) derive from, so they are cancelled on shutdown instead of
+	// running on a detached context.Background(). Set via SetBaseContext.
+	baseCtx context.Context
+}
+
+// SetBaseContext sets the parent context for the engine's background workers
+// (currently the rolling summarizer). Pass main's app context so a shutdown
+// cancels in-flight summary work.
+func (e *WorkflowEngine) SetBaseContext(ctx context.Context) {
+	if ctx != nil {
+		e.baseCtx = ctx
+	}
 }
 
 func NewWorkflowEngine(cfg *config.Config, erpClient *erp.Client, queries database.Querier) *WorkflowEngine {
@@ -106,6 +119,7 @@ func NewWorkflowEngine(cfg *config.Config, erpClient *erp.Client, queries databa
 		cfg:       cfg,
 		erpClient: erpClient,
 		queries:   queries,
+		baseCtx:   context.Background(),
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -376,12 +390,9 @@ func (e *WorkflowEngine) executeToolLoop(ctx context.Context, state *State, spec
 		systemPrompt += "\n\nSummary of the conversation so far:\n" + state.Summary
 	}
 
-	// Keep history to last 8 messages + system prompt
-	historyCount := len(state.Messages)
-	if historyCount > 8 {
-		historyCount = 8
-	}
-	messages := append([]Message{{Role: "system", Content: systemPrompt}}, state.Messages[len(state.Messages)-historyCount:]...)
+	// state.Messages is already bounded by the memory subsystem's per-agent
+	// max_history (LoadConversation) — no second, hardcoded truncation here.
+	messages := append([]Message{{Role: "system", Content: systemPrompt}}, state.Messages...)
 
 	maxIterations := 4
 	for i := 0; i < maxIterations; i++ {
@@ -430,6 +441,15 @@ func (e *WorkflowEngine) executeToolLoop(ctx context.Context, state *State, spec
 				"output": toolRes,
 			})
 
+			// Durable per-step log (C2): a crash mid-loop still leaves a record of
+			// what ran, unlike the best-effort wa_activity blob written once at the
+			// end. Best-effort — never fails the turn.
+			toolStatus := "ok"
+			if ok, present := toolRes["ok"].(bool); present && !ok {
+				toolStatus = "error"
+			}
+			e.logToolExecution(ctx, state.ChatID, call.Function.Name, args, toolRes, toolStatus)
+
 			resBytes, _ := json.Marshal(toolRes)
 
 			// Append response to history
@@ -445,4 +465,26 @@ func (e *WorkflowEngine) executeToolLoop(ctx context.Context, state *State, spec
 
 	state.FinalReply = "لم أتمكن من إكمال طلبك، تكرر استدعاء المهام بأسلوب غير صحيح."
 	return nil
+}
+
+// logToolExecution durably records one tool execution to tool_executions (C2).
+// Best-effort: a logging failure must never break the reply path, and a nil
+// querier (unit tests / unconfigured DB) is a no-op.
+func (e *WorkflowEngine) logToolExecution(ctx context.Context, chatID, toolID string, args, result map[string]interface{}, status string) {
+	if e.queries == nil {
+		return
+	}
+	argsBytes, _ := json.Marshal(args)
+	if len(argsBytes) == 0 {
+		argsBytes = []byte("{}")
+	}
+	resBytes, _ := json.Marshal(result)
+	if len(resBytes) == 0 {
+		resBytes = []byte("{}")
+	}
+	if err := e.queries.CreateToolExecution(ctx, database.CreateToolExecutionParams{
+		ChatID: chatID, ToolID: toolID, Args: argsBytes, Result: resBytes, Status: status,
+	}); err != nil {
+		trace.Logf(ctx, "[workflow] failed to log tool execution %s/%s: %v", chatID, toolID, err)
+	}
 }

@@ -10,12 +10,14 @@ All findings were verified by reading source directly. Citations use `path:line`
 
 ## Implementation status
 
-The three **Blocker** items were implemented (see [Remediation](#remediation--blockers-implemented)). The **Critical** and **Minor** items are documented for triage and were **not** changed.
+**All findings are now implemented and verified.** The three **Blocker** items (B1–B3), all seven
+**Critical** items (C1–C7), and all seven **Minor** items (M1–M7) have landed — see
+[Remediation](#remediation--blockers-implemented) and
+[Critical & Minor remediation](#remediation--critical--minor).
 
-> Note: the Blocker changes were not compiled/tested locally (no toolchain run against this repo was performed at implementation time). Validate with CI before merging:
-> ```
-> go build ./... && go vet ./... && go test ./... -race
-> ```
+> Verified locally after remediation: `go build ./...` ✅ · `go vet ./...` ✅ · `go test ./...` ✅
+> (all packages, including the new `TestRequestConfirmationDoesNotOverwriteLivePending`). CI
+> additionally runs the suite under `-race`.
 
 ---
 
@@ -36,19 +38,19 @@ The three **Blocker** items were implemented (see [Remediation](#remediation--bl
 |---|---|---|
 | Declarative per-agent tool-calling + OpenAI-schema | **EXISTS** | `internal/workflow/tools.go:10-357` |
 | Per-agent tool scoping + RBAC | **EXISTS** | `engine.go:362-372`, `tools.go:360-436` |
-| Human-in-the-loop confirmation (durable; single-slot) | **PARTIAL** | `confirmation.go`, `schema.sql` |
+| Human-in-the-loop confirmation (durable; single-slot) | **IMPROVED** (no silent overwrite, C7) | `confirmation.go` |
 | Conversation memory + rolling summarization (bounded) | **EXISTS** | `internal/workflow/memory.go:31-171` |
 | `context.Context` threading | **EXISTS** | `main.go`, `engine.go`, `erp/client.go` |
 | Trace correlation | **PARTIAL** → improved (trace id now sent on ERP calls) | `internal/trace/trace.go`, `erp/client.go` |
 | Tool-loop bounding (4 iters) | **EXISTS** | `engine.go:386/446` |
-| Durable step/event log | **MISSING** | `engine.go:427`, `main.go` audit blob |
+| Durable step/event log | **ADDED** (C2) | `tool_executions`, `engine.go` `logToolExecution` |
 | Resumable state machine | **MISSING** | `engine.go:270-448` |
 | Durable job queue + backpressure | **PARTIAL** (bounded fan-out added; no durable queue) | `main.go` |
-| Inbound idempotency / dedup | **MISSING** (no dedup on `evt.Info.ID`) | — |
+| Inbound idempotency / dedup | **FIXED** (C1) | `processed_messages`, `main.go` |
 | Concurrency-safe confirmation execution | **FIXED** (atomic claim) | `confirmation.go`, `ClaimPendingConfirmation` |
 | Retry / backoff on ERP | **FIXED** | `erp/client.go` `doSignedPOST` |
 | Partial-failure recovery / compensation / saga | **MISSING** | `engine.go:390-392` |
-| Per-request deadline | **MISSING** (only per-HTTP timeouts) | `main.go` |
+| Per-request deadline | **FIXED** (C6) | `main.go` (120 s per message) |
 | Deterministic replay | **MISSING** | `engine.go:389` |
 
 ---
@@ -112,27 +114,25 @@ Two inbound network surfaces, one primary outbound ERP integration. The daemon e
 - **B2 — Confirmation flow could double-execute financial writes.** `confirmation.go`. `GetPendingConfirmation` → `DeletePendingConfirmation` → `CallTool` were three non-transactional steps; two concurrent affirmations could both read the row before either deleted and both post the payment. Delete-before-execute also lost a confirmed action on crash.
 - **B3 — ERP money-path had no retry/backoff/idempotency.** `erp/client.go`. A single transient error failed a payment; the idempotency key was LLM-invented, so a naive retry could double-post.
 
-### 🟠 Critical — open (recommended next milestone)
+### 🟠 Critical — fixed
 
-- **C1** No inbound dedup on `evt.Info.ID` → at-least-once redelivery re-runs the pipeline.
-- **C2** No durable step/event log → multi-tool failures after side effects are unrecoverable; the audit blob is best-effort write-only.
-- **C3** No `/healthz` / `/readyz` / `/metrics`.
-- **C4** Stdlib `log` only (no structured logging/levels). *(Trace-id propagation on ERP calls is addressed by B3.)*
-- **C5** Login rate-limiter keyed on spoofable `X-Forwarded-For` (`web/server.go`).
-- **C6** No per-request/workflow deadline; app-lifetime ctx.
-- **C7** Single-slot pending confirmation silently overwrites (`schema.sql`).
+- **C1 ✅** Inbound dedup on `evt.Info.ID` via a durable `processed_messages` ledger, marked at the start of processing so an at-least-once redelivery is skipped and side effects never re-run. `main.go`, `schema.sql`, `database/agentic.sql.go`.
+- **C2 ✅** Durable per-tool step log (`tool_executions`) written as each tool completes, in both the inline loop and the confirmed-write path — a crash mid-loop now leaves a queryable record beyond the best-effort `wa_activity` blob. `engine.go` `logToolExecution`, `confirmation.go`, `schema.sql`.
+- **C3 ✅** Unauthenticated `/healthz` (liveness), `/readyz` (DB ping + WhatsApp state; 503 when the DB is down), and `/metrics` (JSON uptime / goroutines / WA-state / voice-note counters). `web/server.go`, wired via `SetDB(pool)` in `main.go`.
+- **C4 ✅** `log/slog` default logger (text, or JSON via `LOG_FORMAT=json`) writing to stdout + the SSE broker; the stdlib logger is bridged through slog so every line is leveled/structured. `web/server.go` `configureLogging`.
+- **C5 ✅** The login limiter keys on the real TCP peer captured by `capturePeerIP` (installed before `RealIP`), so a spoofed `X-Forwarded-For` can't mint unlimited login buckets. `web/server.go`.
+- **C6 ✅** Per-message deadline: `handleIncomingMessage` runs under `context.WithTimeout(ctx, 120s)`; outbound sends still use `context.Background()` so a reply goes out regardless. `main.go`.
+- **C7 ✅** `requestConfirmation` refuses to overwrite a live pending confirmation, telling the operator to resolve the current one first. `confirmation.go` (+ regression test).
 
-> C1 (inbound dedup) and C2 (durable step log) can reuse the durable-queue-with-retry pattern already proven in `internal/voicenotes/store.go`.
+### 🟡 Minor — fixed
 
-### 🟡 Minor — open
-
-- **M1** Raw DB error strings to operator clients (`web/server.go`).
-- **M2** Seeded admin password logged to SSE (`main.go`).
-- **M3** bcrypt-timing user enumeration + no lockout/session rotation (`web/auth.go`).
-- **M4** Detached summarizer on `context.Background()` drops trace/shutdown (`memory.go`).
-- **M5** Contradictory history truncation (`engine.go` hardcoded 8 vs memory limit).
-- **M6** `config.LoadConfig()` re-read per message (`main.go`).
-- **M7** `Client` field written outside mutex (`internal/whatsmeow/client.go:135`).
+- **M1 ✅** DB/operational errors are logged server-side; clients get generic messages (agent create/update, pairing-code). `web/server.go`.
+- **M2 ✅** The generated admin one-time password is written straight to `os.Stderr`, never through the logger the SSE stream tees. `main.go`.
+- **M3 ✅** Login runs a dummy bcrypt compare on an unknown username, so a missing user costs the same as a wrong password (no timing enumeration). `web/auth.go`. *(Per-account lockout / session rotation remains a future enhancement.)*
+- **M4 ✅** The rolling summarizer derives from the engine's app-lifetime base context (cancelled on shutdown) and carries the turn's trace id. `engine.go` `SetBaseContext`, `memory.go`.
+- **M5 ✅** Removed the redundant hardcoded-8 truncation in `executeToolLoop`; the memory subsystem's per-agent `max_history` is now the single bound. `engine.go`.
+- **M6 ✅** `config` is passed into `handleIncomingMessage` instead of `LoadConfig()` re-reading the environment on every message. `main.go`.
+- **M7 ✅** The `Client` field write in `Initialize` is guarded by the manager mutex. `internal/whatsmeow/client.go`.
 
 ---
 
@@ -161,6 +161,33 @@ Files: `internal/erp/client.go`, `internal/workflow/confirmation.go`.
 - The confirmed-write path replaces the model-invented `idempotencyKey` in tool args with a deterministic value (`chat_id + tool_id + args`), but only when the tool already declares that field — never adding it to tools that don't.
 
 **Integration note for the mshalia gateway team:** the header names (`x-swa-idempotency-key`, `x-swa-trace-id`) must match what the gateway reads, and the gateway must dedup writes on the idempotency key — that dedup is what makes `CallTool` retries safe for financial writes.
+
+---
+
+## Remediation — Critical & Minor
+
+Implemented in the same pass and validated (`go build`/`vet`/`test` all clean). Two new tables are
+added to `schema.sql` (idempotent `CREATE TABLE IF NOT EXISTS`, applied on boot) and backed by
+hand-written query methods in `database/agentic.sql.go` (sqlc not installed locally; re-running
+`sqlc generate` stays compatible), with both purged by the daily retention job.
+
+- **Durability (C1, C2, C7).** `processed_messages` (inbound dedup), `tool_executions` (durable
+  per-step log), and a single-slot overwrite guard in `requestConfirmation`. `main.go`,
+  `internal/workflow/{engine,confirmation}.go`, `schema.sql`, `query.sql`, `database/*`.
+- **Reliability (C6, M4, M5, M6).** Per-message deadline; the summarizer moved to the app-lifetime
+  context (`WorkflowEngine.SetBaseContext`) with trace propagation; the redundant history
+  truncation removed; `config` threaded into the handler. `main.go`,
+  `internal/workflow/{engine,memory}.go`.
+- **Observability (C3, C4).** `/healthz` · `/readyz` · `/metrics` and a `log/slog` logger
+  (text/JSON) that bridges the stdlib logger and still feeds the SSE stream. `web/server.go`,
+  `main.go`.
+- **Security (C5, M1, M2, M3, M7).** Login limiter on the true TCP peer; sanitized client-facing
+  errors; the seeded password to stderr only; dummy-bcrypt timing equalization; mutex-guarded
+  `Client` write. `web/{server,auth}.go`, `main.go`, `internal/whatsmeow/client.go`.
+
+**Still out of scope** (larger design work, not in the Critical/Minor list): a resumable state
+machine, saga/compensation for partial multi-tool failures, and deterministic replay — these
+remain the path from "stateless router + confirmation gate" to a fully durable workflow engine.
 
 ---
 

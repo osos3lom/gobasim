@@ -224,6 +224,33 @@ func TestIsAffirmation(t *testing.T) {
 	}
 }
 
+// C7: a new risky request must not silently overwrite a live pending
+// confirmation — the operator is told to resolve the current one first.
+func TestRequestConfirmationDoesNotOverwriteLivePending(t *testing.T) {
+	q := &confirmFakeQuerier{pending: &database.PendingConfirmation{
+		ChatID:      "123@s.whatsapp.net",
+		ToolID:      "record_expense",
+		Description: "تسجيل مصروف بمبلغ 1200 ريال",
+		ExpiresAt:   time.Now().Add(5 * time.Minute),
+	}}
+	e := newConfirmTestEngine(q, func(ctx context.Context, m []Message, tools []ToolDefinition, temp float32, maxTokens int) (*Message, error) {
+		t.Fatal("LLM must not be called by the overwrite guard")
+		return nil, nil
+	})
+
+	state := linkedState("mark task t7 as done")
+	if err := e.requestConfirmation(context.Background(), state, "update_task_status", map[string]interface{}{"taskId": "t7", "status": "completed"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if q.pending == nil || q.pending.ToolID != "record_expense" {
+		t.Fatalf("the existing pending confirmation was overwritten: %+v", q.pending)
+	}
+	if !strings.Contains(state.FinalReply, "بانتظار التأكيد") {
+		t.Fatalf("expected a conflict reply asking to resolve the current one, got %q", state.FinalReply)
+	}
+}
+
 func TestUnknownToolDefaultsToMediumRisk(t *testing.T) {
 	if riskOf("some_future_tool") != "medium" {
 		t.Fatal("unknown tools must default to medium risk (confirmation required)")

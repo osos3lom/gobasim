@@ -18,6 +18,12 @@ import (
 
 const SessionCookieName = "sawt_session"
 
+// dummyBcryptHash is compared against the supplied password when the username
+// is unknown, so a missing user takes the same time as a wrong password —
+// closing the bcrypt-timing user-enumeration side channel. Generated once at
+// startup so it is a valid hash (an invalid one would short-circuit the compare).
+var dummyBcryptHash, _ = bcrypt.GenerateFromPassword([]byte("timing-equalizer-not-a-real-credential"), bcrypt.DefaultCost)
+
 type contextKey string
 
 const UsernameContextKey contextKey = "username"
@@ -119,11 +125,13 @@ func (a *AuthManager) RequireAuth(next http.Handler) http.Handler {
 func (a *AuthManager) Login(ctx context.Context, username, password string) (*http.Cookie, error) {
 	user, err := a.queries.GetUserByUsername(ctx, username)
 	if err != nil {
+		// Run a dummy comparison so an unknown username costs the same as a
+		// wrong password (no bcrypt-timing enumeration), then fail generically.
+		_ = bcrypt.CompareHashAndPassword(dummyBcryptHash, []byte(password))
 		return nil, fmt.Errorf("invalid username or password")
 	}
 
-	err = bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password))
-	if err != nil {
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
 		return nil, fmt.Errorf("invalid username or password")
 	}
 

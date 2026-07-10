@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -30,6 +31,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/mdp/qrterminal/v3"
 	"go.mau.fi/whatsmeow"
@@ -43,6 +45,13 @@ import (
 // inboundLimiter throttles how many messages a single WhatsApp chat can push
 // through the STT/LLM/ERP pipeline: 8 messages per rolling minute per chat.
 var inboundLimiter = ratelimit.New(8, time.Minute)
+
+// messageProcessingTimeout bounds one inbound message's whole pipeline
+// (STT → identity → LLM tool loop → TTS). Without it the pipeline ran on the
+// app-lifetime context and a stuck provider could pin a handler indefinitely.
+// Outbound WhatsApp sends deliberately use context.Background() so a reply still
+// goes out even if this deadline is hit mid-processing.
+const messageProcessingTimeout = 120 * time.Second
 
 //go:embed schema.sql
 var schemaSQL string
@@ -132,6 +141,7 @@ func main() {
 	ttsOrch := speech.NewTTSOrchestrator(cfg)
 	erpClient := erp.NewClient(cfg.MshaliaAPIURL, cfg.AgentGatewaySecret)
 	wfEngine := workflow.NewWorkflowEngine(cfg, erpClient, queries)
+	wfEngine.SetBaseContext(ctx) // background summarizer cancels on shutdown (M4)
 
 	// Voice-note archival to Firebase Cloud Storage. Optional: a nil store is
 	// inert, so the pipeline needs no feature flags. Init failure only warns —
@@ -181,7 +191,7 @@ func main() {
 				case <-ctx.Done():
 					return
 				}
-				handleIncomingMessage(ctx, waMgr.Client, msg, queries, sttOrch, ttsOrch, erpClient, wfEngine, voiceStore)
+				handleIncomingMessage(ctx, cfg, waMgr.Client, msg, queries, sttOrch, ttsOrch, erpClient, wfEngine, voiceStore)
 			}(v)
 		case *events.Connected:
 			waMgr.SetState(waClient.StateConnected, "", "")
@@ -246,6 +256,7 @@ func main() {
 	// 4. Start Dashboard HTTP Web Server
 	webServer := web.NewServer(cfg, queries, waMgr, ttsOrch)
 	webServer.SetVoiceStore(voiceStore) // nil-safe: no-ops when archival is disabled
+	webServer.SetDB(pool)               // drives the /readyz DB probe (C3)
 	router := webServer.GetRouter()
 
 	// The server handle is declared here (not inside the goroutine) so the
@@ -322,6 +333,9 @@ func runRetention(ctx context.Context, queries *database.Queries, days int) {
 		// Ledger rows only — the GCS objects themselves are deleted by a
 		// bucket lifecycle rule matching RETENTION_DAYS (see DEPLOYMENT.md).
 		"wa_voice_notes": queries.PurgeWaVoiceNotesBefore,
+		// Agentic-gateway audit tables (C1 dedup ledger, C2 tool step log).
+		"processed_messages": queries.PurgeProcessedMessagesBefore,
+		"tool_executions":    queries.PurgeToolExecutionsBefore,
 	} {
 		if err := fn(ctx, cutoff); err != nil {
 			monitor.ReportError(ctx, "retention:"+name, err)
@@ -368,8 +382,11 @@ func seedAdminUser(ctx context.Context, pool *pgxpool.Pool, queries *database.Qu
 	}
 
 	if generated {
-		log.Printf("Database: Seeded admin user %q with a generated one-time password: %s", username, password)
-		log.Println("Database: ^^ This password will NOT be shown again. Log in and change it, or set ADMIN_USERNAME/ADMIN_PASSWORD.")
+		// Write the one-time password straight to stderr, never via the standard
+		// logger: the dashboard's SSE log stream tees log output, and a generated
+		// credential must not be viewable there (M2).
+		fmt.Fprintf(os.Stderr, "\nDatabase: Seeded admin user %q with a generated one-time password: %s\n", username, password)
+		fmt.Fprintln(os.Stderr, "Database: ^^ This password will NOT be shown again. Log in and change it, or set ADMIN_USERNAME/ADMIN_PASSWORD.")
 	} else {
 		log.Printf("Database: Seeded admin user %q from ADMIN_USERNAME/ADMIN_PASSWORD.", username)
 	}
@@ -396,6 +413,7 @@ func newContactParams(chatJID, pushName string) database.CreateOrUpdateWaContact
 
 func handleIncomingMessage(
 	ctx context.Context,
+	cfg *config.Config,
 	client *whatsmeow.Client,
 	evt *events.Message,
 	queries *database.Queries,
@@ -418,6 +436,12 @@ func handleIncomingMessage(
 
 	// Every log line for this message is grep-able by its WhatsApp message id.
 	ctx = trace.With(ctx, evt.Info.ID)
+
+	// Bound the whole pipeline for this one message (C6). Reply sends below use
+	// context.Background() on purpose, so a reply still goes out if this fires.
+	ctx, cancel := context.WithTimeout(ctx, messageProcessingTimeout)
+	defer cancel()
+
 	defer func() {
 		if r := recover(); r != nil {
 			monitor.ReportPanic("handleIncomingMessage", r)
@@ -426,6 +450,20 @@ func handleIncomingMessage(
 	}()
 
 	trace.Logf(ctx, "Inbound: Received message from %s", evt.Info.Chat.String())
+
+	// Inbound dedup (C1): WhatsApp redelivers at-least-once (e.g. on reconnect).
+	// Record this message id once, up front; a redelivery finds the row and is
+	// skipped, so the STT/LLM/ERP pipeline (and any tool side effects) never
+	// re-runs for one message. Marking at the start is at-most-once: it favors not
+	// double-executing an ERP write over retrying a message whose first attempt
+	// failed. A DB error here is non-fatal — better a rare re-process than a drop.
+	if _, err := queries.MarkMessageProcessed(ctx, evt.Info.ID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			trace.Logf(ctx, "Inbound: duplicate delivery of %s — already processed, skipping", evt.Info.ID)
+			return
+		}
+		trace.Logf(ctx, "Inbound: dedup check failed for %s (proceeding): %v", evt.Info.ID, err)
+	}
 
 	// Throttle per chat so one number can't hammer the LLM/ERP pipeline.
 	if allowed, count := inboundLimiter.Allow(evt.Info.Chat.String()); !allowed {
@@ -709,7 +747,6 @@ func handleIncomingMessage(
 		assignedAgentID = contact.AgentID
 	}
 
-	cfg := config.LoadConfig()
 	llmModelPtr := &cfg.NimModel
 
 	var ttsProvPtr *string

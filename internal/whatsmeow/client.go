@@ -132,7 +132,9 @@ func (m *WhatsAppManager) Initialize(ctx context.Context, eventHandler func(inte
 	client := whatsmeow.NewClient(deviceStore, clientLog)
 
 	client.AddEventHandler(eventHandler)
+	m.mu.Lock()
 	m.Client = client
+	m.mu.Unlock()
 
 	return nil
 }

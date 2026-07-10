@@ -233,3 +233,18 @@ LIMIT $1;
 
 -- name: PurgeWaVoiceNotesBefore :exec
 DELETE FROM wa_voice_notes WHERE created_at < $1;
+
+-- name: MarkMessageProcessed :one
+INSERT INTO processed_messages (id) VALUES ($1)
+ON CONFLICT (id) DO NOTHING
+RETURNING id;
+
+-- name: PurgeProcessedMessagesBefore :exec
+DELETE FROM processed_messages WHERE processed_at < $1;
+
+-- name: CreateToolExecution :exec
+INSERT INTO tool_executions (chat_id, tool_id, args, result, status)
+VALUES ($1, $2, $3, $4, $5);
+
+-- name: PurgeToolExecutionsBefore :exec
+DELETE FROM tool_executions WHERE ts < $1;

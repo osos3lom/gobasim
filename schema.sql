@@ -193,3 +193,28 @@ CREATE INDEX IF NOT EXISTS idx_stt_history_ts ON stt_history (ts DESC);
 CREATE INDEX IF NOT EXISTS idx_wa_contacts_updated ON wa_contacts (updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_wa_activity_ts ON wa_activity (ts DESC);
 CREATE INDEX IF NOT EXISTS idx_wa_messages_chat_seq ON wa_messages (chat_id, seq DESC);
+
+-- Inbound dedup ledger (C1): WhatsApp redelivers messages at-least-once (e.g.
+-- on reconnect). Each inbound message id is recorded once, at the start of
+-- processing; a redelivery finds the row already present and is skipped, so the
+-- STT/LLM/ERP pipeline (and any tool side effects) never re-runs for one message.
+CREATE TABLE IF NOT EXISTS processed_messages (
+    id TEXT PRIMARY KEY,                       -- WhatsApp evt.Info.ID
+    processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_processed_messages_at ON processed_messages (processed_at);
+
+-- Durable per-tool step log (C2): one row per tool execution as it completes,
+-- so a crash mid-loop leaves a queryable record of what ran (beyond the
+-- best-effort wa_activity.tool_calls blob). Purged by the daily retention job.
+CREATE TABLE IF NOT EXISTS tool_executions (
+    id BIGSERIAL PRIMARY KEY,
+    chat_id TEXT NOT NULL,
+    tool_id TEXT NOT NULL,
+    args JSONB NOT NULL DEFAULT '{}'::jsonb,
+    result JSONB NOT NULL DEFAULT '{}'::jsonb,
+    status TEXT NOT NULL DEFAULT 'ok',          -- 'ok' | 'error' | 'confirmed'
+    ts TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_tool_executions_chat_ts ON tool_executions (chat_id, ts DESC);
+CREATE INDEX IF NOT EXISTS idx_tool_executions_ts ON tool_executions (ts);

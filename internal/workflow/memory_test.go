@@ -88,6 +88,12 @@ func (f *fakeQuerier) UpsertConversationState(ctx context.Context, arg database.
 	return nil
 }
 
+// CreateToolExecution is a no-op durable-log stub (C2) so tool-loop and
+// confirmation tests don't hit the embedded nil Querier.
+func (f *fakeQuerier) CreateToolExecution(ctx context.Context, arg database.CreateToolExecutionParams) error {
+	return nil
+}
+
 func newMemoryTestEngine(q database.Querier, fake completionFn) *WorkflowEngine {
 	e := NewWorkflowEngine(&config.Config{NimModel: "test-model"}, erp.NewClient("http://localhost:0", ""), q)
 	e.complete = fake

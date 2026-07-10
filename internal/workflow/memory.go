@@ -103,11 +103,22 @@ func (e *WorkflowEngine) SaveTurns(ctx context.Context, chatID, userText, assist
 	}
 
 	// Summarization is best-effort and must not add latency to the reply path.
+	// It runs off the engine's app-lifetime base context (cancelled on shutdown)
+	// rather than a detached context.Background(), and carries the message's trace
+	// id so its log lines correlate with the turn that triggered it.
+	traceID := trace.ID(ctx)
+	base := e.baseCtx
+	if base == nil {
+		base = context.Background()
+	}
 	go func() {
-		bgCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		bgCtx, cancel := context.WithTimeout(base, 60*time.Second)
 		defer cancel()
+		if traceID != "" {
+			bgCtx = trace.With(bgCtx, traceID)
+		}
 		if err := e.summarizeIfNeeded(bgCtx, chatID); err != nil {
-			trace.Logf(ctx, "[memory] rolling summary failed for %s: %v", chatID, err)
+			trace.Logf(bgCtx, "[memory] rolling summary failed for %s: %v", chatID, err)
 		}
 	}()
 }
