@@ -3,10 +3,11 @@
 > **Audience:** the `mshalia` (Next.js + Firestore ERP) development team.
 > **From:** the `sawt-gateway` (Go / WhatsApp assistant) team.
 > **Purpose:** `sawt-gateway` already ships a generic client that calls your ERP Agent Gateway
-> over a signed HTTP contract. The **operations** tools are live and working; the **accounting**
-> and **administration** tools are called by our client but currently **`404`** because they don't
-> exist on your side yet. This document specifies exactly what to build so our two sides line up
-> with **zero code changes on our end**.
+> over a signed HTTP contract. It now calls **39 tool ids across 6 agents** (operations, accounting,
+> administration, client self-service, sales, breeding — see §4). None are verified against a live
+> `mshalia` yet, so every call currently **`404`s** until you implement these endpoints. This
+> document specifies exactly what to build so our two sides line up with **zero code changes on our
+> end** (our `CallTool` is generic over `toolId`).
 >
 > **What we need back from you:** once you implement these endpoints, publish a **reference
 > Markdown file** (`mshalia-agent-gateway-reference.md`) documenting each tool's exact
@@ -25,7 +26,7 @@
 1. [Transport & Authentication](#1-transport--authentication)
 2. [`identity/resolve` endpoint](#2-identityresolve-endpoint)
 3. [`tools/{toolId}` endpoint](#3-toolstoolid-endpoint)
-4. [Tool Catalogue (12 ids)](#4-tool-catalogue-12-ids)
+4. [Tool Catalogue (39 ids across 6 agents)](#4-tool-catalogue-39-ids-across-6-agents)
 5. [Server-Side Guardrails](#5-server-side-guardrails)
 6. [Error Model](#6-error-model)
 7. [Handshake — What to Deliver Back](#7-handshake--what-to-deliver-back)
@@ -142,7 +143,7 @@ in subsequent tool calls (see §3).
 
 Executes a single allow-listed tool as a specific acting user within a specific org.
 
-**URL:** `POST {MSHALIA_API_URL}/api/agent/v1/tools/{toolId}` where `{toolId}` is one of the 12 ids
+**URL:** `POST {MSHALIA_API_URL}/api/agent/v1/tools/{toolId}` where `{toolId}` is one of the 39 ids
 in §4.
 
 **Request body (from `CallTool`):**
@@ -177,45 +178,100 @@ model as the parsed body — so **return a structured error body even on `404`**
 
 ---
 
-## 4. Tool Catalogue (12 ids)
+## 4. Tool Catalogue (39 ids across 6 agents)
 
-Field names, types, and required markers below are **verbatim** from `internal/workflow/tools.go`.
-The LLM calls these via OpenAI tool-calling; you receive them under `args`. Implement input
-validation (Zod) matching these exactly.
+Field names and required markers below are **verbatim** from `internal/workflow/tools.go`.
+The LLM calls these via OpenAI tool-calling; you receive the arguments under `args`. Implement Zod
+input validation matching these exactly.
 
-Legend: **R** = required. `risk` drives our confirmation flow (see §5).
+**Two access controls apply to every tool — enforce both server-side:**
+- **`risk`** drives *our* confirmation flow — `medium`/`high` tools are restated to the user and
+  require an explicit "yes" before we call you (see §5). Financial writes are always `high`.
+- **`min-role`** is the minimum app-role (`client < viewer < manager < admin < super_admin`) we
+  require before a tool is even offered to the model. **Enforce the same minimum on your side**
+  against the `actingUserUid`'s role — our filter is best-effort UX; yours is the security boundary.
 
-### 4.1 Operations agent — **LIVE** (already implemented; listed for contract completeness)
+Legend: **R** = required arg. (Every `list_*` tool also accepts an optional `limit`, default 20.)
 
-| Tool id | Purpose | Args | Risk |
-|---|---|---|---|
-| `get_horse` | Look up a horse by id, or search by name (AR/EN). Provide `horseId` **or** `nameQuery`. | `horseId` (string), `nameQuery` (string) | low |
-| `get_care_plan` | Get a horse's care plan (turnout, feeding, instructions). | `horseId` (string) **R** | low |
-| `list_tasks` | List tasks, optionally filtered. | `status` (string: pending/in-progress/completed/missed), `assigneeId` (string), `horseId` (string), `limit` (integer, default 20) | low |
-| `update_task_status` | Update a task's status. | `taskId` (string) **R**, `status` (string: pending/in-progress/completed/missed) **R** | **medium** |
+### 4.1 Operations agent (15 tools)
 
-### 4.2 Accounting agent — **TO BUILD** (currently `404`)
+| Tool id | Purpose | Key args | Risk | Min-role |
+|---|---|---|---|---|
+| `get_horse` | Look up a horse by id or name (AR/EN). | `horseId` / `nameQuery` (one of) | low | viewer |
+| `get_care_plan` | Care plan (turnout, feeding, instructions). | `horseId` **R** | low | viewer |
+| `list_tasks` | List tasks, filterable. | `status`, `assigneeId`, `horseId` | low | viewer |
+| `update_task_status` | Update a task's status. | `taskId` **R**, `status` **R** (pending/in-progress/completed/missed) | medium | manager |
+| `list_horses` | List horses, filterable. | `breed`, `status`, `gender` | low | viewer |
+| `list_stalls` | List stalls, filterable. | `barnId`, `status` | low | viewer |
+| `get_stall_availability` | Stall availability. | `barnId` | low | viewer |
+| `assign_stall` | Assign a horse to a stall. | `horseId` **R**, `stallId` **R** | medium | manager |
+| `register_horse` | Register a new horse. | `nameEn` **R**, `nameAr` **R**, `breed` **R**, `color` **R**, `gender` **R**, `ownerId` | medium | manager |
+| `check_in_horse` | Check a horse into a stall. | `horseId` **R**, `stallId` | medium | manager |
+| `check_out_horse` | Check a horse out. | `horseId` **R** | medium | manager |
+| `report_incident` | Report an injury/asset incident. | `horseId` **R**, `title` **R**, `description` **R**, `severity` **R** (low/medium/high/critical) | medium | manager |
+| `list_incidents` | List incidents, filterable. | `horseId`, `resolved` | low | viewer |
+| `book_vet_appointment` | Book a vet/farrier appointment. | `horseId` **R**, `vetName` **R**, `type` **R** (routine/emergency/farrier/dental/vaccination), `scheduledAt` **R** (ISO), `notes` | medium | manager |
+| `record_treatment_plan` | Record a vet treatment plan. | `horseId` **R**, `diagnosis` **R**, `medications` **R** (JSON array), `notes` | medium | manager |
 
-| Tool id | Purpose | Args | Risk |
-|---|---|---|---|
-| `list_invoices` | List invoices, optionally filtered. | `status` (string: draft/sent/paid/overdue), `clientId` (string), `limit` (integer, default 20) | low |
-| `get_invoice` | Get one invoice by id (line items, totals, payment status). | `invoiceId` (string) **R** | low |
-| `record_expense` | Record a business expense (e.g. a feed bill). | `amount` (number, SAR) **R**, `category` (string, e.g. feed/vet/maintenance) **R**, `description` (string), `vendorId` (string) | **high** |
-| `record_payment` | Record a payment received against an invoice. | `invoiceId` (string) **R**, `amount` (number, SAR) **R**, `method` (string, e.g. cash/transfer/card) | **high** |
+### 4.2 Accounting agent (4 tools)
 
-### 4.3 Administration agent — **TO BUILD** (currently `404`)
+| Tool id | Purpose | Key args | Risk | Min-role |
+|---|---|---|---|---|
+| `list_invoices` | List invoices, filterable. | `status` (draft/sent/paid/overdue/cancelled), `clientId` | low | manager |
+| `get_invoice` | One invoice (line items, totals, payment status). | `invoiceId` **R** | low | manager |
+| `record_expense` | Record a business expense. | `amount` **R** (SAR), `category` **R**, `idempotencyKey` **R**, `description`, `vendorId`, `vatAmount`, `horseId`, `expenseDate` | **high** | manager |
+| `record_payment` | Record a payment against an invoice. | `invoiceId` **R**, `amount` **R** (SAR), `idempotencyKey` **R**, `method` | **high** | manager |
 
-| Tool id | Purpose | Args | Risk |
-|---|---|---|---|
-| `list_clients` | List clients, optionally filtered by name (AR/EN). | `nameQuery` (string), `limit` (integer, default 20) | low |
-| `get_client` | Get one client by id (contact info, linked horses). | `clientId` (string) **R** | low |
-| `list_contracts` | List contracts, optionally filtered. | `clientId` (string), `status` (string: active/expired/draft), `limit` (integer, default 20) | low |
-| `get_contract` | Get one contract by id (terms, linked client). | `contractId` (string) **R** | low |
+> **Idempotency:** `record_expense` and `record_payment` send a **required** `idempotencyKey`.
+> Persist it and dedupe — a retried call with the same key must not double-post.
+
+### 4.3 Administration agent (4 tools)
+
+| Tool id | Purpose | Key args | Risk | Min-role |
+|---|---|---|---|---|
+| `list_clients` | List clients, filterable by name (AR/EN). | `nameQuery` | low | manager |
+| `get_client` | One client (contact info, linked horses). | `clientId` **R** | low | manager |
+| `list_contracts` | List contracts, filterable. | `clientId`, `status` (active/expired/pending/draft/terminated) | low | manager |
+| `get_contract` | One contract (terms, linked client). | `contractId` **R** | low | manager |
+
+### 4.4 Client self-service agent (6 tools)
+
+> Routed to **directly** when the resolved identity's role is `client` (bypasses intent
+> classification). All tools are **scoped to the acting user** — return only the caller's own data.
+
+| Tool id | Purpose | Key args | Risk | Min-role |
+|---|---|---|---|---|
+| `list_my_horses` | The caller's horses. | — | low | client |
+| `get_my_horse` | One of the caller's horses. | `horseId` **R** | low | client |
+| `list_my_invoices` | The caller's invoices. | `status` | low | client |
+| `get_my_balance` | The caller's outstanding balance. | — | low | client |
+| `get_my_statement` | The caller's statement of account. | — | low | client |
+| `list_my_contracts` | The caller's contracts. | `status` | low | client |
+
+### 4.5 Sales / CRM agent (5 tools)
+
+| Tool id | Purpose | Key args | Risk | Min-role |
+|---|---|---|---|---|
+| `list_available_horses` | Horses for sale. | `breed` | low | viewer |
+| `list_available_stalls` | Empty stalls for boarding. | — | low | viewer |
+| `list_packages` | Service/boarding packages + pricing. | `category` | low | viewer |
+| `book_tour` | Book a site tour for a lead. | `name` **R**, `phone` **R**, `scheduledAt` **R** (ISO), `leadId`, `notes` | medium | viewer |
+| `submit_inquiry` | Submit a CRM inquiry. | `name` **R**, `phone` **R**, `inquiryType` **R** (boarding/breeding/purchase/other), `email`, `notes` | medium | viewer |
+
+### 4.6 Breeding agent (5 tools)
+
+| Tool id | Purpose | Key args | Risk | Min-role |
+|---|---|---|---|---|
+| `list_breeding_stock` | Mares/stallions in breeding stock. | `gender` (mare/stallion) | low | viewer |
+| `book_breeding` | Book a mare×stallion breeding. | `mareId` **R**, `stallionId` **R**, `bookingDate` **R** (YYYY-MM-DD), `notes` | medium | manager |
+| `get_pregnancy_status` | Pregnancy/ultrasound history for a mare. | `mareId` **R** | low | viewer |
+| `list_foals` | Foal records / recent births. | — | low | viewer |
+| `recommend_bloodline` | Breeding compatibility recommendation. | `mareId` **R**, `stallionId` **R** | low | viewer |
 
 > **Note on ids/amounts:** our agents are prompted to **resolve entities by id via the `list`/`get`
-> tools before acting**, and to **restate amounts exactly**. Your read tools should therefore return
-> stable ids and enough disambiguating fields (names in AR/EN, amounts, statuses) for the model to
-> pick the right entity.
+> tools before acting**, and to **restate amounts exactly**. Your read tools should return stable
+> ids and enough disambiguating fields (AR/EN names, amounts, statuses) for the model to pick the
+> right entity.
 
 ---
 
@@ -272,7 +328,7 @@ our client `json.Unmarshal`s the body and fails hard on non-JSON).
 
 After implementing §2–§6, publish **`mshalia-agent-gateway-reference.md`** containing:
 
-1. **Per-tool reference** for all 8 new ids (and, ideally, the 4 live operations tools):
+1. **Per-tool reference** for all 39 tool ids (§4):
    exact request `args` schema, exact success `data` schema, `permissions {scopes, minRole}`,
    `risk`, `idempotent`, `rollback`, and `failureModes[]`.
 2. **Error catalogue** — every `code` your gateway can return and when.
@@ -291,7 +347,7 @@ your `data` shapes differ from what our prompts expect, we adjust prompts/schema
 
 The integration is "done" when:
 
-- [ ] A request signed with a valid vector returns **200** for each of the 8 new tool ids.
+- [ ] A request signed with a valid vector returns **200** for each of the 39 tool ids (§4).
 - [ ] A request with a **skewed timestamp** (> ±5 min) is rejected with **401**.
 - [ ] A request with a **bad signature** is rejected with **401**.
 - [ ] An **unknown tool id** returns a structured **404** JSON body (not HTML).

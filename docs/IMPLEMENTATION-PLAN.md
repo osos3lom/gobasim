@@ -52,12 +52,12 @@ risk-gated confirmations (Postgres-backed), and the operator web dashboard (`web
   contact/agent config, WhatsApp pairing, live SSE logs (`web/*`).
 - PII retention job, error/panic webhook, per-message trace ids, voice-note archival to GCS
   (`main.go`, `internal/monitor`, `internal/trace`, `internal/voicenotes`).
-- CI (`build` + `vet` + `test -race -cover`) and **74 test functions across 14 test files**.
+- CI (`build` + `vet` + `test -race -cover`) and **75 test functions across 14 test files**.
 
 **The single blocking reality:** the entire stack is **built but never verified against live
 services** (no run against a real paired WhatsApp number + deployed `mshalia` + real LLM/STT/TTS
-keys — milestone **M9**), and the **8 accounting/administration tool ids the Go client calls do
-not exist on the `mshalia` side yet** (they will `404`). Layered on top are a handful of
+keys — milestone **M9**), and the **39 tool ids the Go client calls (across 6 agents) do not exist
+on the `mshalia` side yet** (they will `404`). Layered on top are a handful of
 production-hardening gaps surfaced by [`DEPLOYMENT.md`](DEPLOYMENT.md): no in-app TLS, no
 `/healthz`, no graceful HTTP shutdown, no HTTP server timeouts, and real secrets sitting in a
 `.env.production` file on disk.
@@ -115,9 +115,9 @@ Risk uses {Critical, High, Medium, Low}. Effort is engineering-days for a single
 - **Evidence:** `main.go:handleIncomingMessage` (download→STT→identity→workflow→TTS→send→audit);
   `internal/workflow/engine.go` (classify + tool loop); `internal/speech/{stt,tts}.go` cascades;
   `internal/whatsmeow/client.go`; `web/server.go` dashboard.
-- **Missing:** live end-to-end verification (M9); `mshalia`-side accounting/administration tools
-  (8 ids `404` — see [`mshalia-side.md`](mshalia-side.md)); SAR amount thresholds within the
-  `high` risk tier; identity-resolution cache (resolves fresh every message).
+- **Missing:** live end-to-end verification (M9); `mshalia`-side gateway tools for all **39 ids
+  across 6 agents** (`404` — see [`mshalia-side.md`](mshalia-side.md)); SAR amount thresholds within
+  the `high` risk tier; identity-resolution cache (resolves fresh every message).
 - **Dependencies:** live WhatsApp number, deployed `mshalia`, real LLM/STT/TTS keys.
 - **Acceptance:** the 7 eval scenarios pass as real WhatsApp conversations (voice + text);
   operations tools mutate real ERP state through confirmation; accounting/admin tools return
@@ -161,7 +161,7 @@ Risk uses {Critical, High, Medium, Low}. Effort is engineering-days for a single
 ### 3.5 Testing Coverage — Score 62 · Risk: High
 
 - **Status:** Solid unit baseline on the logic-heavy packages; thin on integration/live paths.
-- **Evidence:** **74 test functions across 14 `*_test.go` files** — auth cookies, CSRF, HMAC ERP
+- **Evidence:** **75 test functions across 14 `*_test.go` files** — auth cookies, CSRF, HMAC ERP
   contract, intent cleaning, tool-loop bounds, memory, confirmation lifecycle, rate limiter,
   voice-note store, a 7-scenario eval suite, and templates. CI runs `go test ./... -race -cover`.
 - **Missing:** no minimum-coverage gate in CI; `internal/speech/*` untested; `main.go`'s
@@ -295,7 +295,7 @@ Risk uses {Critical, High, Medium, Low}. Effort is engineering-days for a single
 | # | Inconsistency | Reality (verified) | Authoritative source | Action |
 |---|---|---|---|---|
 | I-1 | `docs/GCP-GATEWAY-SETUP.md` instructed `curl localhost:8080/health`, `git clone` + `go run main.go`, and referenced `GATEWAY_SHARED_SECRET` / `WEBHOOK_URL`. | **No `/health` endpoint exists**; deploy ships a prebuilt binary (no source on the VM); `GATEWAY_SHARED_SECRET`/`WEBHOOK_URL` are dead (old three-runtime design). | **`DEPLOYMENT.md`** | ✅ **Resolved** — deleted in the docs consolidation. |
-| I-2 | `BLUEPRINT.md` §3 says "~40 unit tests". | Actual: **74 test functions across 14 files**. | This plan / codebase | Refresh BLUEPRINT count (Phase 5). |
+| I-2 | `BLUEPRINT.md` §3 said "~40 unit tests" and listed 3 agents / 9 tables. | Actual: **75 test functions across 14 files**, **6 agents / 39 tools**, **14 tables**. | This plan / codebase | ✅ **Resolved** — BLUEPRINT §3/§5/§7 refreshed. |
 | I-3 | `BLUEPRINT.md` §7 table lists only the original tables and says whatsmeow is untested. | Schema now also has `conversation_turns`, `conversation_state`, `pending_confirmations`, `wa_messages`, `wa_voice_notes`; `internal/whatsmeow` has tests. | `schema.sql` / codebase | Refresh BLUEPRINT §7 (Phase 5). |
 | I-4 | `DEPLOYMENT.md` §16 defines liveness as "any 200/3xx from `/login`". | Correct — it explicitly acknowledges there is no health endpoint. | `DEPLOYMENT.md` (consistent) | Not a defect, but an operational weakness → add `/healthz` (Phase 1c). |
 | I-5 | `DEPLOYMENT.md` Caddy config proxies `127.0.0.1:8080`, but the app binds `:8080` on all interfaces. | Consistent **only because** the GCP firewall never opens 8080; the app is not bound to loopback. | `DEPLOYMENT.md` + `main.go` | Bind the listener to `127.0.0.1` as defense-in-depth (Phase 3). |
@@ -310,7 +310,7 @@ Risk uses {Critical, High, Medium, Low}. Effort is engineering-days for a single
 | D-2 | No `/healthz` / `/metrics` | Observability | High | Uptime checks hit an auth redirect; no metrics at all. |
 | D-3 | No HTTP server timeouts | Reliability/Security | High | Slowloris/DoS exposure; trivial fix in `main.go`. |
 | D-4 | No graceful `http.Server.Shutdown` | Reliability | High | In-flight dashboard requests dropped on restart. |
-| D-5 | `mshalia` accounting/admin tools missing | Functionality | High | 8 tool ids `404`; external dependency — see `mshalia-side.md`. |
+| D-5 | `mshalia` gateway tools missing | Functionality | High | 39 tool ids across 6 agents `404`; external dependency — see `mshalia-side.md`. |
 | D-6 | Never verified live (M9) | Functionality | Critical | Whole stack tested only against fakes. |
 | D-7 | No in-app TLS; `SECURE_COOKIE=true` needs a proxy | Security | High | Reverse-proxy path documented but not validated end-to-end. |
 | D-8 | Identity resolved every message (no cache) | Performance | Medium | Extra HMAC round-trip per inbound message. |
@@ -393,16 +393,16 @@ Effort is engineering-days for one Go dev. Priority ∈ {P0, P1, P2, P3}.
 - **Definition of Done:** each scenario produces a correct reply; operations writes go through
   confirmation; failures are triaged and fixed.
 
-#### 2b. `mshalia`-side accounting/administration tools (external dependency)
-- **Objective:** make accounting/admin intents functional instead of `404`.
-- **Description:** the `mshalia` team implements the 8 gateway tool ids per
-  [`mshalia-side.md`](mshalia-side.md) and returns a reference MD; our side then adds no code
-  (the client is generic) beyond confirming the schemas.
-- **Priority:** P1 · **Impact:** unlocks two of three agents · **Complexity:** External ·
-  **Time:** tracked in `mshalia`.
+#### 2b. `mshalia`-side gateway tools (external dependency)
+- **Objective:** make agent intents functional instead of `404`.
+- **Description:** the `mshalia` team implements the **39 gateway tool ids across 6 agents** per
+  [`mshalia-side.md`](mshalia-side.md) — enforcing the per-tool `min-role` server-side — and returns
+  a reference MD; our side then adds no code (the client is generic) beyond confirming the schemas.
+- **Priority:** P1 · **Impact:** unlocks all 6 agents (operations/accounting/administration/client/
+  sales/breeding) · **Complexity:** External · **Time:** tracked in `mshalia`.
 - **Files:** `internal/erp/client.go` (no change expected); `internal/workflow/tools.go` (schema
   reconciliation only).
-- **Definition of Done:** all 8 ids return structured data for a signed request; contract-test
+- **Definition of Done:** all 39 ids return structured data for a signed request; contract-test
   vectors from their reference MD pass against our client.
 
 #### 2c. Identity-resolution cache/TTL
@@ -551,7 +551,7 @@ Effort is engineering-days for one Go dev. Priority ∈ {P0, P1, P2, P3}.
 - [ ] The 7 eval scenarios pass as live conversations (P0)
 
 **External dependency (`mshalia`)**
-- [ ] 8 accounting/administration tools implemented per `mshalia-side.md`; reference MD delivered (P1)
+- [ ] All 39 gateway tools (6 agents) implemented per `mshalia-side.md` with server-side role enforcement; reference MD delivered (P1)
 - [ ] Accounting/admin intents return data, not `404` (P1)
 
 **Backup & DR**
@@ -570,7 +570,7 @@ Effort is engineering-days for one Go dev. Priority ∈ {P0, P1, P2, P3}.
 
 - **Top 5 blockers to production:**
   1. **Never verified live (M9)** — the whole stack is tested only against fakes (D-6).
-  2. **`mshalia`-side accounting/administration tools don't exist** — those intents `404` (D-5).
+  2. **`mshalia`-side gateway tools don't exist** — all 39 tool ids (6 agents) `404` (D-5).
   3. **No validated TLS path** — `SECURE_COOKIE=true` requires an HTTPS terminator not yet proven
      end-to-end (D-7).
   4. **Real secrets on disk** — must be rotated and moved to Secret Manager (D-1).

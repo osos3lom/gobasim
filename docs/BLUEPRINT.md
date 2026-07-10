@@ -43,8 +43,9 @@ main.go: handleIncomingMessage()
   │  3. resolve actor identity: erpClient.ResolveIdentity(phone) → mshalia (HMAC POST)
   │  4. load conversation memory (last 8 turns + rolling summary) and call wfEngine.Execute()
   │     → pending confirmation? resolve it first (yes → execute parked tool; else cancel)
-  │     → ClassifyIntent (1 LLM call) → route to operations | accounting | administration | general chat
-  │     → bounded 4-iteration tool-calling loop over that agent's tools;
+  │     → client-role identities skip classification → client self-service agent
+  │     → else ClassifyIntent (1 LLM call) → route to operations | accounting | administration | sales | breeding | general chat
+  │     → bounded 4-iteration tool-calling loop over that agent's tools (filtered by the actor's role);
   │       medium/high-risk calls park in pending_confirmations and ask the user first
   │  5. persist the exchange to conversation_turns (summary folds in background)
   │  6. if original message was audio: TTS cascade → ffmpeg WAV→Opus
@@ -61,7 +62,7 @@ WhatsApp reply (text + voice)
 
 **What's unchanged:** the *external* signed channel from this binary to `mshalia`'s ERP Agent Gateway (`x-swa-signature` / `x-swa-timestamp`, `HMAC-SHA256(secret, "{timestamp}.{rawBody}")`, secret = `AGENT_GATEWAY_SECRET`) — implemented identically in `internal/erp/client.go`.
 
-**Env vars actually consumed** (`config/config.go`): `DATABASE_URL`, `PORT`, `AGENT_GATEWAY_SECRET`, `MSHALIA_API_URL`, `NIM_API_KEY`, `NIM_BASE_URL`, `NIM_MODEL`, `STT_PROVIDER`, `STT_MODEL`, `OPENAI_API_KEY`, `OPENAI_API_BASE`, `HF_API_KEY`, `TTS_PROVIDER`, `TTS_MODEL`, `PAIR_PHONE_NUMBER`, `SESSION_SECRET`, `GROQ_API_KEY`, `GCP_API_KEY`, `SECURE_COOKIE`. (`GATEWAY_SHARED_SECRET` is loaded but dead — see above.)
+**Env vars actually consumed** (`config/config.go` + `main.go`): `DATABASE_URL`, `PORT`, `AGENT_GATEWAY_SECRET`, `MSHALIA_API_URL`, `NIM_API_KEY`, `NIM_BASE_URL`, `NIM_MODEL`, `STT_PROVIDER`, `STT_MODEL`, `OPENAI_API_KEY`, `OPENAI_API_BASE`, `LLM_FALLBACK_MODEL`, `HF_API_KEY`, `TTS_PROVIDER`, `TTS_MODEL`, `PAIR_PHONE_NUMBER`, `SESSION_SECRET`, `SECURE_COOKIE`, `GROQ_API_KEY`, `GCP_API_KEY`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `ERROR_WEBHOOK_URL`, `RETENTION_DAYS`, `VOICE_STORAGE_BUCKET`, `VOICE_STORAGE_PREFIX`, `VOICE_SPOOL_DIR`, `ALLOW_MISSING_FFMPEG`, and `GOOGLE_APPLICATION_CREDENTIALS` (GCS ADC in dev). See [`DEPLOYMENT.md`](DEPLOYMENT.md) §5 for the full reference table. (The old `GATEWAY_SHARED_SECRET` is gone.)
 
 ---
 
@@ -79,12 +80,17 @@ Legend: ✅ built · ⚠️ partial · ⛔ missing · 🛑 critical defect (must
 | TTS | ✅ `internal/speech/tts.go` — 3-provider cascade: Google Cloud TTS → Hugging Face Spaces → local gTTS | **deviates from the original design intent** (Habibi/SILMA voice-clone sidecar) — generic TTS voices instead of a branded clone voice; a deliberate call the team should confirm |
 | Audio transcode | ✅ `internal/audio/audio.go` — ffmpeg OGG/Opus ↔ WAV; checked at boot, fail-fast (`ALLOW_MISSING_FFMPEG=true` for text-only) (Phase 6) | — |
 | LLM reasoning + tool-calling | ✅ (unverified live) `internal/workflow/engine.go` — provider cascade NIM → OpenAI-compatible fallback (`OPENAI_API_KEY` + `LLM_FALLBACK_MODEL`), real intent classification, bounded 4-iteration tool loop (Phase 4) | structured-output response node (plain text only, as designed); live verification |
-| Conversation memory across turns | ✅ (unverified live) `internal/workflow/memory.go` — last 8 turns replayed from `conversation_turns` per chat; rolling summary folds threads >20 turns via background LLM call; summary injected into system prompts (Phase 2) | live verification of pronoun resolution quality |
-| ERP Agent Gateway client (this repo's side) | ✅ (unverified live) `internal/erp/client.go` — HMAC-signed `identity/resolve` + `tools/{toolId}`, generic over tool id | server-side enforcement (`PermissionScope`, the 8 new accounting/administration tool ids, amount thresholds) lives in `mshalia`, out of this repo's scope |
+| Conversation memory across turns | ✅ (unverified live) `internal/workflow/memory.go` — replays the assigned agent's `max_history` turns (default 8, clamped `[1,20]`) from `conversation_turns` per chat; rolling summary folds threads >20 turns via background LLM call; summary injected into system prompts | live verification of pronoun resolution quality |
+| ERP Agent Gateway client (this repo's side) | ✅ (unverified live) `internal/erp/client.go` — HMAC-signed `identity/resolve` + `tools/{toolId}`, generic over tool id | server-side enforcement (`PermissionScope`, the **39 tool ids across 6 agents**, amount thresholds) lives in `mshalia`, out of this repo's scope — see [`mshalia-side.md`](mshalia-side.md) |
 | Identity resolution | ✅ (unverified live) resolves on every inbound message via `ResolveIdentity` | no cache/TTL — resolves fresh every message (same gap as before the rewrite) |
 | Confirmation / approval for risky or financial ops (M4) | ✅ built (Phase 3) — per-tool risk tags (unknown → medium), medium/high calls park in `pending_confirmations` (10-min TTL), affirmation executes / anything else cancels / expiry cancels silently, full audit trail in `wa_activity.tool_calls` | SAR amount thresholds within a risk tier (all financial writes are simply `high` today); live verification |
-| Accounting agent | ✅ Go-side built (Phase 5) — `list_invoices`, `get_invoice`, `record_expense` (high), `record_payment` (high) | **mshalia-side gateway tools for these ids do not exist yet** — calls will 404 until built in `mshalia` |
-| Administration agent | ✅ Go-side built (Phase 5) — `list_clients`, `get_client`, `list_contracts`, `get_contract` | same: mshalia-side tools pending |
+| Operations agent | ✅ Go-side built — **15 tools**: horses, care plans, tasks, stalls (list/availability/assign), register/check-in/check-out, incidents, vet appointments, treatment plans | mshalia-side tools for the write ids (assign_stall, register_horse, check_in/out, report_incident, book_vet_appointment, record_treatment_plan) pending — see [`mshalia-side.md`](mshalia-side.md) §4.1 |
+| Accounting agent | ✅ Go-side built — `list_invoices`, `get_invoice`, `record_expense` (high), `record_payment` (high); financial writes carry a required `idempotencyKey` | **mshalia-side gateway tools do not exist yet** — calls 404 until built |
+| Administration agent | ✅ Go-side built — `list_clients`, `get_client`, `list_contracts`, `get_contract` | mshalia-side tools pending |
+| Client self-service agent | ✅ Go-side built — 6 owner-scoped read tools (`list_my_horses`/`_invoices`/`_contracts`, `get_my_horse`/`_balance`/`_statement`); `client`-role identities route here directly | mshalia-side tools pending |
+| Sales / CRM agent | ✅ Go-side built — 5 tools (`list_available_horses`/`_stalls`, `list_packages`, `book_tour`, `submit_inquiry`) | mshalia-side tools pending |
+| Breeding agent | ✅ Go-side built — 5 tools (`list_breeding_stock`, `book_breeding`, `get_pregnancy_status`, `list_foals`, `recommend_bloodline`) | mshalia-side tools pending |
+| Role-based tool access (RBAC) | ✅ Go-side built — per-tool `toolMinRole` gating in `executeToolLoop`, fail-closed (`client < viewer < manager < admin < super_admin`) | UX-side only; `mshalia` must enforce the same minimum server-side. If a resolved role isn't in the hierarchy the actor sees no tools (M9 verification risk) |
 | Dashboard | ✅ `web/server.go` — session-authed login, activity feed, contact/agent config, WhatsApp pairing, SSE logs; CSRF-protected POSTs (Phase 0) | — |
 | "One WhatsApp stack" (old M5 goal) | ✅ true by construction — one in-process `whatsmeow` client, dashboard controls it directly | — |
 | Database schema | ✅ `schema.sql` embedded, idempotent on boot | no versioned migrations — additive-only; a future rename/drop needs a manual migration story |
@@ -94,7 +100,7 @@ Legend: ✅ built · ⚠️ partial · ⛔ missing · 🛑 critical defect (must
 | Session management | ⚠️ HMAC-signed cookie, ephemeral `SESSION_SECRET` if unset (warned at boot) | set `SESSION_SECRET` in prod; still single-instance by design ([A3]) |
 | PII / retention controls | ✅ (Phase 6) `RETENTION_DAYS` (default 90): stt/tts history + conversation turns purged, `wa_activity` transcripts redacted in place, daily | region pinning / encryption-at-rest remain whatever Neon provides |
 | Observability | ✅ (Phase 4) per-message trace id (= WhatsApp message id) on every pipeline log line; `ERROR_WEBHOOK_URL` error/panic reporting with trace attached | metrics/dashboards; LangSmith-style LLM tracing |
-| Testing | ✅ baseline (Phases 1–6) — ~40 unit tests: auth cookies, HMAC contract, intent cleaning, tool-loop bounds, memory, confirmation lifecycle, provider fallback, 7-scenario eval suite | coverage is concentrated in `workflow`/`web`/`erp`; speech/whatsmeow packages untested (need live services) |
+| Testing | ✅ **75 test functions across 14 files** — auth cookies, CSRF, HMAC contract, intent cleaning, tool-loop bounds + role filtering, memory, confirmation lifecycle, provider fallback, voice-note store, whatsmeow, web handlers, 7-scenario eval suite | no coverage gate; the `speech` package + `main.go`'s handler remain thin |
 | CI | ✅ `.github/workflows/ci.yml` — build + vet + `test -race -cover` on push/PR | — |
 | Repo hygiene | ✅ `.gitignore` added, `go.sum` tracked (Phase 0) | — |
 
@@ -110,10 +116,10 @@ The original M0–M7 numbering is preserved for continuity with the pre-consolid
 - **M3 — ERP Agent Gateway MVP (in `mshalia`).** Unchanged from before — this repo's client side (`internal/erp/client.go`) is done and unverified live; the gateway itself lives in `mshalia`, out of this repo.
 - **M4 — Tools + identity + confirmation.** ✅ Built (Phases 2+3), unverified live. Conversation memory (`internal/workflow/memory.go`) + risk-gated confirmation flow (`internal/workflow/confirmation.go`). **Done-when:** confirmed ✅, audited ✅, multi-turn ✅ — end-to-end live verification still pending.
 - **M5 — Dashboard convergence.** ✅ Done, as a side effect of the consolidation — one WhatsApp stack, dashboard controls it directly.
-- **M6 — Accounting + Administration agents.** ✅ Go side built (Phase 5): 8 tools across the two agents, financial writes confirmation-gated at `high` risk. **Remaining:** the matching `mshalia`-side gateway tools (tracked in `mshalia`); PDF tools; manager-approval routing (beyond user self-confirmation).
+- **M6 — Accounting + Administration agents.** ✅ Go side built (Phase 5) and since **expanded well beyond the original scope**: alongside accounting + administration, the Go side now also ships client self-service, sales/CRM, and breeding agents plus an enriched operations tool set — **39 tools across 6 agents**, role-gated, financial writes confirmation-gated at `high` risk with required idempotency keys. **Remaining:** the matching `mshalia`-side gateway tools (tracked in `mshalia`); PDF tools; manager-approval routing (beyond user self-confirmation).
 - **M7 — Hardening.** ✅ Built (Phases 4+6): trace ids, webhook error/panic reporting, retention job, CI, eval suite, [`DEPLOYMENT.md`](DEPLOYMENT.md) runbook. **Remaining:** metrics/dashboards; live smoke run.
 - **M8 — Go rewrite production-readiness debt.** ✅ Closed (Phase 0): admin credential from env/generated, CSRF, rate limiting, `.gitignore`, `go.sum` tracked.
-- **M9 — Live verification (next).** ⛔ The whole stack is now built-but-unverified-live: pair a real WhatsApp number, point at a deployed `mshalia` with real `AGENT_GATEWAY_SECRET`, real NIM/Groq keys, and run the eval scenarios as real conversations (voice + text). Also: implement the 8 accounting/administration tool ids in `mshalia`.
+- **M9 — Live verification (next).** ⛔ The whole stack is now built-but-unverified-live: pair a real WhatsApp number, point at a deployed `mshalia` with real `AGENT_GATEWAY_SECRET`, real NIM/Groq keys, and run the eval scenarios as real conversations (voice + text). Also: implement the 39 gateway tool ids (6 agents) in `mshalia` (see [`mshalia-side.md`](mshalia-side.md)).
 
 ---
 
@@ -122,11 +128,12 @@ The original M0–M7 numbering is preserved for continuity with the pre-consolid
 There is no LangGraph and no supervisor/subgraph compilation. The equivalent logic is plain Go control flow in `internal/workflow/engine.go`, with agents declared in `internal/workflow/tools.go`:
 
 ```
-resolvePendingConfirmation → ClassifyIntent (1 LLM call, no tools) → route → executeToolLoop(agentSpec) | general chat → FinalReply
+resolvePendingConfirmation → (client role? → client agent) → ClassifyIntent (1 LLM call, no tools) → route → executeToolLoop(agentSpec, role-filtered tools) | general chat → FinalReply
 ```
 
-- Each agent is a declarative `agentSpec` *(name + default persona prompt + tool list)*: **operations** (4 tools), **accounting** (4 tools, financial writes `high` risk), **administration** (4 read tools). Adding an agent or tool means adding a spec entry + a risk tag — the router (`Execute`) never changes, matching the original "register declaratively" principle.
-- Each routed request sees **only that agent's tools** (verified by test).
+- Six declarative `agentSpec`s *(name + default persona prompt + tool list)*, **39 tools** total: **operations** (15), **accounting** (4, financial writes `high` risk), **administration** (4), **client** self-service (6), **sales/CRM** (5), **breeding** (5). Adding an agent or tool means adding a spec entry + a risk tag + a min-role — the router (`Execute`) never changes, matching the "register declaratively" principle.
+- **Role-based access control:** each tool has a minimum app-role (`toolMinRole`; hierarchy `client < viewer < manager < admin < super_admin`). `executeToolLoop` exposes only the tools the actor's resolved role satisfies — **fail-closed**, so an unmapped or empty role sees no tools. A resolved identity whose role is `client` is routed **directly** to the client self-service agent, bypassing intent classification.
+- Each routed request sees **only that agent's tools**, further narrowed by role (verified by test).
 - The loop is bounded at `maxIterations = 4` (not yet configurable per-agent); tool errors are fed back to the model as tool messages for self-correction.
 - Cross-turn state lives in Postgres: `conversation_turns` (last 8 replayed) + `conversation_state` (rolling summary) + `pending_confirmations` (the pause-and-resume equivalent of LangGraph's `interrupt()`).
 
@@ -153,14 +160,14 @@ interface ToolDefinition<I, O> {
   handler(ctx, input): Promise<O>;
 }
 ```
-4 operations tools are live (`get_horse`, `get_care_plan`, `list_tasks`, `update_task_status`); `AssignHorseToStall`/`RecordExpense`/accounting/administration tools are still to build — same state as before the Go rewrite, since this all lives outside this repo.
+Our client now calls **39 tool ids across 6 agents** (see [`mshalia-side.md`](mshalia-side.md) §4); the matching gateway handlers must be built in `mshalia`. None are verified against a live gateway yet — this all lives outside this repo.
 
 ---
 
 ## 7. Data & Schema
 
-- **Platform:** Neon Postgres. Schema source of truth is now the raw `schema.sql` at the repo root (embedded via `//go:embed schema.sql` in `main.go`), executed idempotently on every boot — **not** Drizzle/TypeScript anymore. Tables: `settings, tts_history, stt_history, webhook_logs, agents, users, health_check, wa_contacts, wa_activity` (`whatsmeow`'s own `sqlstore` package separately manages its own device/session tables in the same database).
-- **Agent config** lives in the `agents` table (`system_prompt`, `llm {vendor,url,model}`, `asr/tts`, `max_history`, `mcp_servers`, `skills`) — read by `internal/workflow/engine.go`'s `executeOperations` per contact/agent assignment.
+- **Platform:** Neon Postgres. Schema source of truth is now the raw `schema.sql` at the repo root (embedded via `//go:embed schema.sql` in `main.go`), executed idempotently on every boot — **not** Drizzle/TypeScript anymore. Tables (14): `settings, tts_history, stt_history, webhook_logs, agents, users, health_check, wa_contacts, wa_activity, conversation_turns, conversation_state, pending_confirmations, wa_messages, wa_voice_notes` (`whatsmeow`'s own `sqlstore` package separately manages its own device/session tables in the same database).
+- **Agent config** lives in the `agents` table (`system_prompt`, `llm {vendor,url,model}`, `asr/tts`, `max_history`, `mcp_servers`, `skills`) — the assigned agent's prompt is resolved per contact/agent by `internal/workflow/engine.go`'s `resolveSystemPrompt` (contact prompt override → assigned agent → default agent → the spec's built-in prompt).
 - **ERP:** Firestore, path-nested `organizations/{orgId}/**` (multi-tenant), unchanged, lives in `mshalia`.
 
 ---
@@ -205,7 +212,7 @@ Persona: a seasoned operations manager. Infer from context; ask the single most 
 | LLM bad tool args / wrong task update | strict JSON-schema tool definitions; resolve-don't-invent ids in prompts; risk-gated confirmation with the action restated (built); post-condition validation still not implemented |
 | LLM provider outage | NIM → OpenAI-compatible fallback cascade (built); both down → graceful error reply |
 | Whole stack unverified live | everything above is unit-tested against fakes, not real services — M9 (live verification) is the top-priority next step before onboarding real users |
-| mshalia-side gaps | 8 new tool ids (accounting/administration) and `PermissionScope` enforcement live in the `mshalia` repo and are not yet built there |
+| mshalia-side gaps | the 39 tool ids (across operations/accounting/administration/client/sales/breeding) and `PermissionScope` + role enforcement live in the `mshalia` repo and are not yet built there — see [`mshalia-side.md`](mshalia-side.md) |
 | Schema drift | `schema.sql` is idempotent but not versioned — additive changes only; a rename/drop needs a manual migration story |
 
 ---

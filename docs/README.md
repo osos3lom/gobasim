@@ -13,6 +13,7 @@ pipeline, and the operator web dashboard — in a single process, on a GCP e2-mi
 |---|---|
 | Understand the architecture & product intent | [BLUEPRINT.md](BLUEPRINT.md) |
 | Set up a dev machine, build, deploy, or operate it | [DEPLOYMENT.md](DEPLOYMENT.md) |
+| Run and verify the workflow locally before deploying | [LOCAL-TESTING.md](LOCAL-TESTING.md) |
 | See production-readiness status, scores & the go-live roadmap | [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md) |
 | See the remaining feature backlog (dashboard/observability) | [BACKLOG.md](BACKLOG.md) |
 | Implement the ERP gateway on the `mshalia` side | [mshalia-side.md](mshalia-side.md) |
@@ -25,13 +26,15 @@ pipeline, and the operator web dashboard — in a single process, on a GCP e2-mi
 - **[DEPLOYMENT.md](DEPLOYMENT.md)** — the authoritative runbook: Windows 11 dev setup, `.env`
   reference, build/test/debug, e2-micro optimization, GCP production deploy (systemd, TLS,
   firewall, backups), and security hardening.
+- **[LOCAL-TESTING.md](LOCAL-TESTING.md)** — how to exercise the workflow locally before GCP: a
+  tiered plan using the bundled mock ERP (`cmd/mockerp`) and workflow driver (`cmd/wfcli`).
 - **[IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md)** — the authoritative status doc: a weighted
   **Project Ready %** KPI, a 15-category scorecard, code-vs-docs inconsistencies, the risk
   register, and a prioritized 5-phase go-live roadmap.
 - **[BACKLOG.md](BACKLOG.md)** — the feature backlog (Epics H/O/S/T) plus the delivery record for
   Phase A fixes and the voice-note archive.
 - **[mshalia-side.md](mshalia-side.md)** — the external brief for the `mshalia` ERP team: the exact
-  HMAC contract and the 8 accounting/administration tools our client already calls.
+  HMAC contract and the 39 tools (across 6 agents) our client already calls.
 - **[REFERENCE_REPO_SKILLS.md](REFERENCE_REPO_SKILLS.md)** — reference-only patterns (agent
   orchestration, human-in-the-loop, ERP gateway) distilled from external projects. Some examples
   are LangGraph/Python-flavored; treat as conceptual reference, not the Go implementation.
