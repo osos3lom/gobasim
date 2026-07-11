@@ -8,9 +8,23 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sawt-go/internal/agentcfg"
 	"strings"
 	"time"
 )
+
+// mmsLang maps a BCP-47 language code to the ISO-639-3 code the MMS TTS Space
+// expects, returning "" for anything unmapped so the caller keeps its default.
+func mmsLang(code string) string {
+	switch primarySubtag(code) {
+	case "ar":
+		return "ara"
+	case "en":
+		return "eng"
+	default:
+		return ""
+	}
+}
 
 const (
 	defaultHFSTTURL = "https://api-inference.huggingface.co/models/openai/whisper-large-v3"
@@ -98,11 +112,18 @@ func (p *HuggingFaceProvider) Transcribe(ctx context.Context, wavBytes []byte, l
 
 // Synthesize uses a Gradio Hugging Face Space running facebook/mms-tts-ara.
 func (p *HuggingFaceProvider) Synthesize(ctx context.Context, text string, language string) ([]byte, error) {
+	// Honor the agent's language when it maps to a known MMS code; otherwise keep
+	// the Arabic default the Space is tuned for.
+	voice, _ := agentcfg.VoiceFromContext(ctx)
+	mms := "ara"
+	if code := mmsLang(voice.LanguageCode); code != "" {
+		mms = code
+	}
 	// Gradio input format for MMS: [text, model/language]
 	payload := map[string]interface{}{
 		"data": []interface{}{
 			text,
-			"ara", // Arabic target language code
+			mms,
 		},
 	}
 

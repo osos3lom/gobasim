@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sawt-go/internal/agentcfg"
 	"strings"
 	"time"
 )
@@ -74,8 +75,24 @@ func (p *LocalProvider) Transcribe(ctx context.Context, wavBytes []byte, languag
 	return transcription, nil
 }
 
+// primarySubtag returns the lowercased primary subtag of a BCP-47 code
+// ("ar-XA" -> "ar"), or "" for an empty code.
+func primarySubtag(code string) string {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return ""
+	}
+	if i := strings.IndexAny(code, "-_"); i >= 0 {
+		code = code[:i]
+	}
+	return strings.ToLower(code)
+}
+
 // Synthesize requests the Google Translate TTS endpoint.
 func (p *LocalProvider) Synthesize(ctx context.Context, text string, language string) ([]byte, error) {
+	if voice, ok := agentcfg.VoiceFromContext(ctx); ok && voice.LanguageCode != "" {
+		language = primarySubtag(voice.LanguageCode)
+	}
 	if language == "" {
 		language = "ar"
 	}

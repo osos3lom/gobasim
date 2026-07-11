@@ -54,7 +54,7 @@ func (f *fakeLedger) MarkWaVoiceNoteFailed(ctx context.Context, arg database.Mar
 	defer f.mu.Unlock()
 	row := f.rows[arg.ID]
 	row.Attempts++
-	row.LastError = &arg.LastError
+	row.LastError = arg.LastError
 	row.NextAttemptAt = arg.NextAttemptAt
 	if row.Attempts >= arg.MaxAttempts {
 		row.Status = "failed"

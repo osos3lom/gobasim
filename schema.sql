@@ -60,8 +60,13 @@ CREATE TABLE IF NOT EXISTS agents (
     filler_words BOOLEAN NOT NULL DEFAULT FALSE,
     max_history INTEGER NOT NULL DEFAULT 10,
     mcp_servers JSONB NOT NULL DEFAULT '[]'::jsonb,
-    skills JSONB NOT NULL DEFAULT '[]'::jsonb
+    skills JSONB NOT NULL DEFAULT '[]'::jsonb,
+    sub_agents JSONB NOT NULL DEFAULT '{"enabled":false,"max_tokens":0,"allowed_agents":[]}'::jsonb
 );
+-- Idempotent migration for deployments created before sub_agents existed
+-- (schema bootstrap re-runs on every start, same pattern as pending_confirmations).
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS
+    sub_agents JSONB NOT NULL DEFAULT '{"enabled":false,"max_tokens":0,"allowed_agents":[]}'::jsonb;
 
 CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,

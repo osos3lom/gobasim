@@ -3,6 +3,7 @@ package providers
 import (
 	"context"
 	"fmt"
+	"sawt-go/internal/agentcfg"
 
 	speechapi "cloud.google.com/go/speech/apiv1"
 	speechpb "cloud.google.com/go/speech/apiv1/speechpb"
@@ -10,6 +11,21 @@ import (
 	texttospeechpb "cloud.google.com/go/texttospeech/apiv1/texttospeechpb"
 	"github.com/googleapis/gax-go/v2"
 )
+
+// ssmlGender maps an agentcfg gender string to the Google SSML enum. Returns
+// ok=false for an empty/unknown value so the caller leaves the field unset.
+func ssmlGender(g string) (texttospeechpb.SsmlVoiceGender, bool) {
+	switch g {
+	case "MALE":
+		return texttospeechpb.SsmlVoiceGender_MALE, true
+	case "FEMALE":
+		return texttospeechpb.SsmlVoiceGender_FEMALE, true
+	case "NEUTRAL":
+		return texttospeechpb.SsmlVoiceGender_NEUTRAL, true
+	default:
+		return texttospeechpb.SsmlVoiceGender_SSML_VOICE_GENDER_UNSPECIFIED, false
+	}
+}
 
 // speechRecognizeAPI is the narrow slice of *speechapi.Client this provider
 // needs. The real client satisfies it implicitly; tests inject a fake.
@@ -104,26 +120,42 @@ func (p *GoogleADCProvider) Transcribe(ctx context.Context, wavBytes []byte, lan
 // out) but calls SynthesizeSpeech over gRPC via Application Default
 // Credentials.
 func (p *GoogleADCProvider) Synthesize(ctx context.Context, text string, language string) ([]byte, error) {
+	voice, _ := agentcfg.VoiceFromContext(ctx)
+	if voice.LanguageCode != "" {
+		language = voice.LanguageCode
+	}
 	if language == "" || language == "ar" {
 		language = "ar-XA"
 	}
 
-	voiceName := "ar-XA-Wavenet-A"
-	if language == "ar-XA" {
-		voiceName = "ar-XA-Wavenet-B"
+	voiceName := voice.VoiceName
+	if voiceName == "" {
+		voiceName = "ar-XA-Wavenet-A"
+		if language == "ar-XA" {
+			voiceName = "ar-XA-Wavenet-B"
+		}
+	}
+
+	audioCfg := &texttospeechpb.AudioConfig{
+		AudioEncoding: texttospeechpb.AudioEncoding_LINEAR16,
+	}
+	if voice.Speed > 0 {
+		audioCfg.SpeakingRate = float64(voice.Speed)
+	}
+	voiceParams := &texttospeechpb.VoiceSelectionParams{
+		LanguageCode: language,
+		Name:         voiceName,
+	}
+	if g, ok := ssmlGender(voice.Gender); ok {
+		voiceParams.SsmlGender = g
 	}
 
 	req := &texttospeechpb.SynthesizeSpeechRequest{
 		Input: &texttospeechpb.SynthesisInput{
 			InputSource: &texttospeechpb.SynthesisInput_Text{Text: text},
 		},
-		Voice: &texttospeechpb.VoiceSelectionParams{
-			LanguageCode: language,
-			Name:         voiceName,
-		},
-		AudioConfig: &texttospeechpb.AudioConfig{
-			AudioEncoding: texttospeechpb.AudioEncoding_LINEAR16,
-		},
+		Voice:       voiceParams,
+		AudioConfig: audioCfg,
 	}
 
 	resp, err := p.tts.SynthesizeSpeech(ctx, req)

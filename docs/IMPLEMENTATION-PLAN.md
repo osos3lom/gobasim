@@ -54,54 +54,61 @@ the HMAC-signed ERP client (`internal/erp`), conversation memory + risk-gated co
   deterministic idempotency + trace header, `/healthz` · `/readyz` · `/metrics`, `log/slog`
   (text/JSON), graceful shutdown + HTTP server timeouts, per-message 120 s deadline.
 - PII retention job, error/panic webhook, per-message trace ids, voice-note archival to GCS.
-- CI (`build` + `vet` + `test -race -cover`) and **141 test functions across 24 test files**
+- CI (`build` + `vet` + `test -race -cover`) and **149 test functions across 24 test files**
   (incl. the 7-scenario eval suite and fake-based speech-provider coverage).
 
-**The single blocking reality:** the stack is **built but never verified against live services**
-(no run against a real paired WhatsApp number + deployed `mshalia` + real LLM/STT/TTS keys —
-milestone **M9**), and the **39 tool ids the Go client calls do not exist on the `mshalia` side
-yet** (they `404`). Layered on: production-hardening gaps in [`DEPLOYMENT.md`](DEPLOYMENT.md) — no
-in-app TLS (by design; terminate at a proxy) and real secrets in a `.env.production` file on disk.
+**Partially verified live (M9 in progress):** a partial live run confirmed the front half of the
+pipeline works against real services — **WhatsApp QR pairing, voice-note send/receive, STT, LLM,
+and TTS all PASS**. The ERP interaction workflow, however, **has not completed**: identity
+resolution **failed** for the super-admin test number `0546906905` (it did not resolve to an org)
+— **now fixed in code** via a configurable default-org fallback (`internal/erp/fallback.go`,
+`DEFAULT_ORG_ID`), pending a live re-run — and the **39 tool ids the Go client calls do not exist
+on the `mshalia` side yet** (they `404`).
+Layered on: production-hardening gaps in [`DEPLOYMENT.md`](DEPLOYMENT.md) — no in-app TLS (by
+design; terminate at a proxy) and real secrets in a `.env.production` file on disk.
 
 ---
 
 ## 2. Project Ready KPI
 
-> ### **Project Ready: 76%**
+> ### **Project Ready: ~77%**
 
 **Formula:** `Project Ready = Σ(weightᵢ × scoreᵢ) / 100`; the 15 weights sum to 100. Each score
 (0–100) is anchored to specific files; each weight reflects how much the category blocks
 production. Scalability is deliberately low-weighted because single-instance operation is an
-intentional constraint **[A3]**, not a defect.
+intentional constraint **[A3]**, not a defect. Scores mirror the §3 category scorecard.
 
 | # | Category | Weight | Score | Contribution |
 |---|---|--:|--:|--:|
-| 1 | Core functionality | 15 | 75 | 11.25 |
-| 2 | Code quality | 6 | 85 | 5.10 |
+| 1 | Core functionality | 15 | 80 | 12.00 |
+| 2 | Code quality | 6 | 88 | 5.28 |
 | 3 | Architecture | 6 | 82 | 4.92 |
 | 4 | Go best practices | 5 | 88 | 4.40 |
-| 5 | Testing coverage | 9 | 70 | 6.30 |
-| 6 | Documentation | 6 | 78 | 4.68 |
+| 5 | Testing coverage | 9 | 77 | 6.93 |
+| 6 | Documentation | 6 | 84 | 5.04 |
 | 7 | Deployment readiness | 8 | 70 | 5.60 |
-| 8 | Windows developer experience | 4 | 78 | 3.12 |
+| 8 | Windows developer experience | 4 | 80 | 3.20 |
 | 9 | Production readiness | 9 | 65 | 5.85 |
 | 10 | Security | 10 | 78 | 7.80 |
 | 11 | Performance | 4 | 75 | 3.00 |
 | 12 | Observability | 6 | 72 | 4.32 |
-| 13 | Reliability | 5 | 75 | 3.75 |
+| 13 | Reliability | 5 | 77 | 3.85 |
 | 14 | Scalability | 3 | 50 | 1.50 |
-| 15 | Maintainability | 4 | 80 | 3.20 |
-| | **Total** | **100** | — | **74.79** |
+| 15 | Maintainability | 4 | 83 | 3.32 |
+| | **Total** | **100** | — | **77.01** |
 
-**~75 → reported as `76%`** (rounded to reflect the audit remediation landing after the previous
-70% baseline). The number rose because the agentic-gateway audit closed the observability
-(`/healthz`+`/metrics`), reliability (graceful shutdown, timeouts, dedup, durable step log), and
-Go-best-practices (server timeouts) gaps that dragged the earlier score down.
+**~77%** (up from 75% after this round of fixes). Landed: the identity default-org fallback
+(`internal/erp/fallback.go` + `DEFAULT_ORG_ID`) that unblocks the ERP path for privileged actors
+(D-6a); confirmation that CI already enforces `golangci-lint` + a 60% coverage gate; and a repo-root
+`README.md` + `CONTRIBUTING.md`. Still capped by items that are **not** in-repo code — the ERP
+workflow has not been re-verified live, the 39 `mshalia` tools still `404`, and there is no
+validated TLS path or vaulted secrets.
 
-**How to read it.** ~76% means the engineering is largely complete and well-hardened, but the
-project is **not yet production-ready**: it has never run end-to-end against live services, has an
-unbuilt external dependency (`mshalia` tools), and still needs a validated TLS path and vaulted
-secrets before public exposure.
+**How to read it.** ~77% means the engineering is largely complete and well-hardened, but the
+project is **not yet production-ready**: the ERP workflow has not completed end-to-end (identity fix
+needs live re-verification + unbuilt `mshalia` tools), and it still needs a validated TLS path and
+vaulted secrets before public exposure. Reaching the mid-80s is gated on those ops/live items, not
+on more code here.
 
 ---
 
@@ -110,17 +117,22 @@ secrets before public exposure.
 Each entry: **Status · Evidence · Missing · Risk · Effort.** Risk ∈ {Critical, High, Medium, Low}.
 Effort is engineering-days for one competent Go dev.
 
-### 3.1 Core Functionality — 75 · High
-- **Status:** Full pipeline implemented; not verified live.
+### 3.1 Core Functionality — 80 · High
+- **Status:** Full pipeline implemented; front half (WhatsApp pairing, voice send/receive, STT,
+  LLM, TTS) verified live. The identity blocker that broke the ERP path live is now fixed in code:
+  a configurable default-org fallback for privileged actors (`internal/erp/fallback.go`,
+  `DEFAULT_ORG_ID`) — pending live re-verification.
 - **Evidence:** `main.go:handleIncomingMessage`; `internal/workflow/engine.go`;
-  `internal/speech/{stt,tts}.go`; `internal/whatsmeow/client.go`; `web/server.go`.
-- **Missing:** live end-to-end verification (M9); `mshalia`-side gateway tools for all **39 ids**
-  (`404`); SAR amount thresholds within the `high` tier; identity-resolution cache.
+  `internal/erp/fallback.go`; `internal/speech/{stt,tts}.go`; `internal/whatsmeow/client.go`.
+- **Missing:** live re-verification of the fixed identity path (M9); `mshalia`-side gateway tools
+  for all **39 ids** (`404`); SAR amount thresholds within the `high` tier; identity-resolution cache.
 - **Effort:** live-run coordination-bound (see §6 Phase 2).
 
-### 3.2 Code Quality — 85 · Low
+### 3.2 Code Quality — 88 · Low
 - Clean, idiomatic, small cohesive files; consistent `%w` error wrapping; `go:embed` assets;
-  `go vet` clean in CI. **Missing:** `golangci-lint` not enforced in CI. · 1 day.
+  `go vet` clean in CI; **`golangci-lint` now enforced in CI** (`.golangci.yml` +
+  `.github/workflows/ci.yml`). **Missing:** the `.golangci.yml` is v1-format while CI pulls
+  golangci-lint `latest` (v2) — pin the action to v1.x or migrate the config. · 0.5 day.
 
 ### 3.3 Architecture — 82 · Low
 - Sound single-binary design; provider-cascade reused across STT/TTS/LLM; declarative `agentSpec`
@@ -133,31 +145,33 @@ Effort is engineering-days for one competent Go dev.
   `Shutdown` now set** (audit B1); per-message 120 s deadline (C6). **Missing:** `inboundLimiter`
   is a package-level global (minor). · 0.5 day.
 
-### 3.5 Testing Coverage — 70 · Medium
-- **141 test functions across 24 files** — auth/CSRF, HMAC ERP contract, intent cleaning,
+### 3.5 Testing Coverage — 77 · Medium
+- **149 test functions across 24 files** — auth/CSRF, HMAC ERP contract, intent cleaning,
   tool-loop bounds + role filtering, memory, confirmation lifecycle (incl. the overwrite
-  regression), rate limiter, voice-note store, speech providers (fakes), a 7-scenario eval suite.
-  CI runs `-race -cover`. **Missing:** no minimum-coverage gate in CI; `main.go`'s
-  `handleIncomingMessage` orchestration not directly tested; coverage % unpublished. · 2–3 days.
+  regression), rate limiter, voice-note store, speech providers (fakes), the identity default-org
+  fallback, a 7-scenario eval suite. **CI now runs `-race` with a 60% minimum-coverage gate**
+  (`.github/workflows/ci.yml`). **Missing:** `main.go`'s `handleIncomingMessage` orchestration not
+  directly tested; `internal/speech/providers` at 55.8% pulls the total down. · 1–2 days.
 
-### 3.6 Documentation — 78 · Low
+### 3.6 Documentation — 84 · Low
 - Consolidated to **6 docs** with a [`README.md`](README.md) index; deploy/architecture docs are
-  thorough and now reconciled to post-audit reality. **Missing:** **no repo-root `README.md`** (only
-  `docs/`); no `CONTRIBUTING.md`. · 1 day.
+  thorough and reconciled to post-audit reality; **repo-root `README.md` + `CONTRIBUTING.md` now
+  present**. **Missing:** no doc lint / link-checker in CI. · 0.5 day.
 
 ### 3.7 Deployment Readiness — 70 · Medium
 - Strong manual runbook (VM, firewall, IAP SSH, hardened systemd, Caddy TLS, journald caps,
   backups); `build-for-gcp.sh`. **Missing:** no automated deploy; secrets in `.env.production` on
   disk (not a vault); no post-deploy smoke test. `/healthz` now exists to target. · 2–3 days.
 
-### 3.8 Windows Developer Experience — 78 · Low
+### 3.8 Windows Developer Experience — 80 · Low
 - Documented for Win 11 + VS Code + PowerShell (winget, `launch.json`, `.env` loader,
-  cross-compile); `cmd/harness` for UI iteration without WhatsApp. **Missing:**
-  `scripts/Load-DotEnv.ps1` inlined in docs but not committed; no `Makefile`/`Taskfile`; no
-  `.vscode/` committed. · 0.5 day.
+  cross-compile); `cmd/harness` for UI iteration without WhatsApp; root `CONTRIBUTING.md` gives a
+  quick-start. **Missing:** no `Makefile`/`Taskfile`; committed `.vscode/` and `scripts/` present
+  but no task runner. · 0.5 day.
 
 ### 3.9 Production Readiness — 65 · High
-- **Never run live**, and serves plain HTTP on `:8080` (TLS terminates at a proxy — **[A]**).
+- **ERP path never run live** (front half — pairing/voice/LLM/STT/TTS — is live-confirmed; identity
+  + ERP is not), and serves plain HTTP on `:8080` (TLS terminates at a proxy — **[A]**).
   `/healthz`·`/readyz`·`/metrics`, graceful shutdown, and HTTP timeouts now exist (audit).
   **Missing:** validated TLS reverse-proxy path end-to-end; secret rotation + vaulting; a real live
   smoke run. · 3–4 days (excl. live-run coordination).
@@ -182,10 +196,11 @@ Effort is engineering-days for one competent Go dev.
   **Missing:** metrics are minimal JSON (no Prometheus histograms); no uptime alerting beyond the
   webhook; no dashboards. · 1–2 days.
 
-### 3.13 Reliability — 75 · Medium
+### 3.13 Reliability — 77 · Medium
 - systemd `Restart=always`; voice-note exponential-backoff retry + on-disk spool; two-layer panic
   recovery; WhatsApp reconnect + debounced disconnect alert; **graceful HTTP shutdown, inbound
-  dedup, atomic confirmation claim, ERP retry/backoff now landed** (audit B1/B2/B3/C1). **Missing:**
+  dedup, atomic confirmation claim, ERP retry/backoff now landed** (audit B1/B2/B3/C1); the
+  identity default-org fallback removes a hard dead-end for privileged actors. **Missing:**
   single-instance SPOF; no automated health-based restart/alert; resumable state machine / saga
   (§5, out of scope). · 1–2 days.
 
@@ -194,10 +209,11 @@ Effort is engineering-days for one competent Go dev.
   broker, one WhatsApp socket. Horizontal scaling would need externalized state (Redis) + socket
   election — explicitly out of scope. · N/A.
 
-### 3.15 Maintainability — 80 · Low
+### 3.15 Maintainability — 83 · Low
 - Small feature-oriented packages; sqlc-generated queries; strong comments; broad unit tests;
-  declarative agent/tool registration. **Missing:** schema idempotent but **not versioned** (a
-  rename/drop needs a manual migration); no lint gate; no `CODEOWNERS`. · 1–2 days.
+  declarative agent/tool registration; **`golangci-lint` gate now enforced in CI**. **Missing:**
+  schema idempotent but **not versioned** (a rename/drop needs a manual migration); no `CODEOWNERS`.
+  · 1 day.
 
 ---
 
@@ -206,15 +222,16 @@ Effort is engineering-days for one competent Go dev.
 | ID | Item | Type | Severity | Notes |
 |---|---|---|---|---|
 | D-1 | Real secrets in `.env.production` on disk | Security | Critical | Gitignored & never in git history, but must be rotated + vaulted before go-live. |
-| D-6 | Never verified live (M9) | Functionality | Critical | Whole stack tested only against fakes. |
+| D-6 | Partial M9 only — ERP path unverified | Functionality | Critical | Front half (pairing/voice/LLM/STT/TTS) live-confirmed; the ERP interaction workflow has never completed end-to-end. |
+| D-6a | Super-admin phone identity resolution returns no org | Functionality | High → **fixed in code** | Confirmed live: `0546906905` did not resolve to an org. **Resolved** by a configurable default-org fallback for privileged roles (`internal/erp/fallback.go`, `DEFAULT_ORG_ID`, wired in `main.go` after resolve; 8-case unit test). Needs a live re-run to close fully, and `DEFAULT_ORG_ID` must be set in the deploy env. |
 | D-5 | `mshalia` gateway tools missing | Functionality | High | 39 tool ids `404`; external dependency — see `mshalia-side.md`. |
 | D-7 | No in-app TLS; `SECURE_COOKIE=true` needs a proxy | Security | High | Reverse-proxy path documented but not validated end-to-end. |
 | D-8 | Identity resolved every message (no cache) | Performance | Medium | Extra HMAC round-trip per inbound message. |
 | D-9 | Schema not versioned (additive-only) | Maintainability | Medium | Rename/drop needs a manual migration story. |
 | D-10 | `middleware.RealIP` trusts spoofable headers | Security | Medium | Safe only behind a trusted proxy; login limiter itself now keys on the true peer (C5). |
 | D-11 | `main.go` handler orchestration untested | Testing | Medium | Coverage concentrated in workflow/web/erp/speech. |
-| D-12 | No repo-root `README.md` / `CONTRIBUTING.md` | Documentation | Low | `docs/README.md` index exists, but no top-level entry point. |
-| D-13 | No lint gate (`golangci-lint`) in CI | Code quality | Low | CI runs build/vet/test only. |
+| D-12 | No repo-root `README.md` / `CONTRIBUTING.md` | Documentation | ~~Low~~ **Resolved** | Repo-root `README.md` + `CONTRIBUTING.md` now present. |
+| D-13 | No lint gate (`golangci-lint`) in CI | Code quality | ~~Low~~ **Resolved** | CI now runs `golangci-lint` (`.golangci.yml`) + a 60% coverage gate. Caveat: v1 config vs golangci-lint `latest` (v2) — pin or migrate. |
 
 > **Resolved & removed** (were D-2/D-3/D-4 in the pre-audit plan): no `/healthz`/`/metrics`, no HTTP
 > server timeouts, no graceful shutdown — all now implemented (§5).
@@ -282,11 +299,27 @@ Ordered by production-blocking priority. Priority ∈ {P0, P1, P2, P3}; effort i
 
 ### Phase 2 — Core Functionality Completion
 
-- **2a. M9 live verification** — P0 · 2–3 days (coordination-bound). Pair a real (spare) WhatsApp
-  number; point at a deployed `mshalia` with a real `AGENT_GATEWAY_SECRET`; supply real
-  NIM/Groq/Google keys; run the 7 eval scenarios (`internal/workflow/eval_test.go`) as real voice +
-  text conversations. **DoD:** each scenario replies correctly; operations writes go through
-  confirmation; failures triaged and fixed. Log results in a new `docs/M9-VERIFICATION.md`.
+- **2a. M9 live verification (partial — complete the ERP path)** — P0 · 2–3 days
+  (coordination-bound). A partial run is done (log below). Remaining: fix identity resolution
+  (D-6a), point at a deployed `mshalia` with all 39 tools live, and run the 7 eval scenarios
+  (`internal/workflow/eval_test.go`) as real voice + text conversations. **DoD:** identity resolves
+  for the test actor; each scenario replies correctly; operations writes go through confirmation;
+  failures triaged and fixed.
+
+  **M9 partial live run — log (folded in from the former `docs/M9-VERIFICATION.md`).** Recorded
+  against real services, a paired WhatsApp device, live LLM/STT/TTS, and the `mshalia` ERP.
+
+  | # | Area | Result | Notes |
+  |---|---|---|---|
+  | 1 | WhatsApp connection & session transport | **PASS** | QR generated via `/dashboard/whatsapp`, scanned on a physical phone; reconnect + remote-logout recovery (`RecreateClient()`) validated. |
+  | 2 | Identity resolution & fallback | **FAIL** | Super-admin `0546906905` did **not** resolve to an org — no `orgIds`, and the `org-demo` fallback did not fire on the phone path. This gates the whole ERP workflow (D-6a). |
+  | 3 | LLM reasoning loop | **PASS** | NIM `meta/llama-3.1-70b-instruct` primary; intent routing worked (e.g. greetings → `other` → general chat). |
+  | 4 | Voice pipeline (STT/TTS) | **PASS** | Arabic voice notes sent **and** received; Groq Whisper STT + Wavenet/MMS/local TTS; ffmpeg Ogg/Opus granule-seek fix (`internal/audio/audio.go:45`) and dynamic waveform (`main.go:770`) verified on-device. |
+  | 5 | ERP tool execution (operations) | **BLOCKED / NOT RUN** | Gated by #2, and all 39 `mshalia` tools `404` (D-5). No operations write was exercised end-to-end. |
+
+  > **Net:** the transport + speech + reasoning half is live-validated; the identity + ERP half is
+  > not. A prior standalone `M9-VERIFICATION.md` claimed a full end-to-end PASS (incl. identity
+  > resolution) — that was inaccurate and has been superseded by this log.
 - **2b. `mshalia`-side gateway tools (external)** — P1 · tracked in `mshalia`. Implement the **39
   gateway tool ids across 6 agents** per [`mshalia-side.md`](mshalia-side.md), enforcing per-tool
   `min-role` server-side + idempotency-key dedup on writes; return a reference MD. Our side needs no
@@ -409,10 +442,11 @@ first; everything reads from it). Each carries the standard DoD: code complete �
 - [ ] `ERROR_WEBHOOK_URL` configured and tested (P1)
 - [ ] journald capped; log retention bounded (P1)
 
-**Verification (M9)**
-- [ ] Real WhatsApp number paired; one full voice + text conversation succeeds (P0)
-- [ ] Operations tool write executes only after explicit confirmation (P0)
-- [ ] The 7 eval scenarios pass as live conversations (P0)
+**Verification (M9 — partial)**
+- [x] Real WhatsApp number paired; a voice round-trip (send/receive + STT + LLM + TTS) succeeds (P0)
+- [ ] Identity resolution succeeds for the test actor (super-admin `0546906905` failed — no org) (P0)
+- [ ] Operations tool write executes only after explicit confirmation (P0) — blocked: tools `404`
+- [ ] The 7 eval scenarios pass as live conversations (P0) — blocked: identity + tools
 
 **External dependency (`mshalia`)**
 - [ ] All 39 gateway tools implemented with server-side role enforcement + idempotency dedup; reference MD delivered (P1)
@@ -426,20 +460,21 @@ first; everything reads from it). Each carries the standard DoD: code complete �
 
 ## 9. Executive Summary
 
-- **Current Project Ready:** **76%** (weighted; §2) — up from a 70% pre-audit baseline after the
-  agentic-gateway hardening (§5) landed.
-- **Production-ready?** **Partially.** Engineering is largely complete and now well-hardened, but
-  the system has never run against live services, depends on unbuilt `mshalia`-side tools, and still
-  needs a validated TLS path and vaulted secrets. Do **not** expose it publicly until Phase 1 + M9
-  are complete.
+- **Current Project Ready:** **~77%** (weighted; §2).
+- **Production-ready?** **Not yet.** Engineering is complete and well-hardened, a partial M9 live
+  run confirmed the WhatsApp/voice/LLM/STT/TTS front half works against real services, and the
+  identity blocker that broke the ERP path live is now fixed in code — but the ERP workflow has not
+  been re-verified live, the 39 `mshalia` tools still `404`, and there is no validated TLS path or
+  secret vaulting yet. Do **not** expose it publicly until Phase 1 + a full M9 are complete.
 - **Top blockers to production:**
-  1. **Never verified live (M9)** — tested only against fakes (D-6).
-  2. **`mshalia`-side gateway tools don't exist** — all 39 tool ids `404` (D-5).
-  3. **No validated TLS path** — `SECURE_COOKIE=true` needs an HTTPS terminator not yet proven (D-7).
-  4. **Real secrets on disk** — rotate and move to Secret Manager (D-1).
-- **Recommended next milestone:** **"M9 — Live Verification"** = Phase 1 (secrets + TLS) + Phase 2a/2b
-  (live run + the `mshalia` dependency). Completing these moves the project from *Partially* to
-  *production-ready* and lifts Project Ready into the mid-80s.
+  1. **ERP workflow unverified end-to-end** — identity fix (D-6a) needs a live re-run, and all 39
+     `mshalia` tool ids `404` (D-5, external).
+  2. **No validated TLS path** — `SECURE_COOKIE=true` needs an HTTPS terminator not yet proven (D-7).
+  3. **Real secrets on disk** — rotate and move to Secret Manager (D-1).
+- **Recommended next milestone:** Re-run M9 with `DEFAULT_ORG_ID` set to confirm the identity fix
+  end-to-end, then land the `mshalia` external tools (D-5) and a validated TLS path. These are
+  ops/live/external — not more code in this repo — and they are what lifts Project Ready into the
+  mid-80s.
 
 > **Assumptions ([A]), stated not assumed-away:** in-app TLS is intentionally absent (terminate at a
 > proxy); HSTS is a proxy responsibility; single-instance operation is deliberate **[A3]**; NIM is

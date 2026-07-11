@@ -30,12 +30,14 @@ type Identity struct {
 type Client struct {
 	baseURL string
 	secret  string
+	http    *http.Client
 }
 
 func NewClient(baseURL, secret string) *Client {
 	return &Client{
 		baseURL: strings.TrimSuffix(baseURL, "/"),
 		secret:  secret,
+		http:    &http.Client{Timeout: 15 * time.Second},
 	}
 }
 
@@ -91,7 +93,6 @@ func idempotencyKey(bodyBytes []byte) string {
 // writes that the gateway treats idempotently by key.
 func (c *Client) doSignedPOST(ctx context.Context, url string, bodyBytes []byte, timeout time.Duration) (int, []byte, error) {
 	idemKey := idempotencyKey(bodyBytes)
-	client := &http.Client{Timeout: timeout}
 
 	var lastErr error
 	for attempt := 1; attempt <= retryAttempts; attempt++ {
@@ -117,7 +118,7 @@ func (c *Client) doSignedPOST(ctx context.Context, url string, bodyBytes []byte,
 			req.Header.Set("x-swa-trace-id", tid)
 		}
 
-		resp, err := client.Do(req)
+		resp, err := c.http.Do(req)
 		if err != nil {
 			lastErr = err
 			continue // transport error — retry

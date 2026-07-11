@@ -90,7 +90,15 @@ var affirmations = map[string]bool{
 
 func isAffirmation(text string) bool {
 	normalized := strings.ToLower(strings.Trim(strings.TrimSpace(text), ".,!؟?"))
-	return affirmations[normalized]
+	if strings.Contains(normalized, "لكن") || strings.Contains(normalized, "but") {
+		return false
+	}
+	for token := range affirmations {
+		if normalized == token || strings.HasPrefix(normalized, token+" ") || strings.HasPrefix(normalized, token+"،") {
+			return true
+		}
+	}
+	return false
 }
 
 // describePendingAction builds the human-readable restatement of the action
@@ -209,9 +217,8 @@ func (e *WorkflowEngine) resolvePendingConfirmation(ctx context.Context, state *
 			"tool":   pending.ToolID,
 			"output": map[string]interface{}{"status": "cancelled"},
 		})
-		state.FinalReply = "حسناً، ألغيت العملية. أرسل طلبك من جديد إذا أردت تنفيذ شيء آخر."
 		trace.Logf(ctx, "[workflow] Pending confirmation for '%s' on chat %s cancelled by user", pending.ToolID, state.ChatID)
-		return true, nil
+		return false, nil
 	}
 
 	var args map[string]interface{}
@@ -229,7 +236,9 @@ func (e *WorkflowEngine) resolvePendingConfirmation(ctx context.Context, state *
 		args["idempotencyKey"] = deterministicIdemKey(state.ChatID, pending.ToolID, pending.Args)
 	}
 
-	result, err := e.erpClient.CallTool(ctx, pending.ToolID, pending.OrgID, pending.ActingUserUid, args)
+	// Route to the owning executor (MCP server or ERP gateway) so a confirmed
+	// write-capable MCP tool actually reaches its server on the user's "yes".
+	result, err := e.executeConfirmedTool(ctx, state.ChatID, pending.ToolID, pending.OrgID, pending.ActingUserUid, args)
 	if err != nil {
 		result = map[string]interface{}{"ok": false, "error": err.Error()}
 	}

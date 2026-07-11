@@ -46,14 +46,14 @@
     eventSource.onmessage = function(event) {
         const line = document.createElement('div');
         line.className = 'py-0.5 border-b border-indigo-950/20 last:border-0 leading-relaxed';
-        
-        // Escape HTML
-        const safeText = event.data
-            .replace(/&/g, "&amp;")
-            .replace(/</g, "&lt;")
-            .replace(/>/g, "&gt;");
-            
-        line.innerHTML = `<span class="text-indigo-400 select-none">&gt;</span> <span class="text-slate-300">${safeText}</span>`;
+        const arrow = document.createElement('span');
+        arrow.className = 'text-indigo-400 select-none';
+        arrow.textContent = '> ';
+        const text = document.createElement('span');
+        text.className = 'text-slate-300';
+        text.textContent = event.data;
+        line.appendChild(arrow);
+        line.appendChild(text);
         logWindow.appendChild(line);
         
         // Auto scroll to bottom

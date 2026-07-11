@@ -1,6 +1,7 @@
 version: "2"
 sql:
-  - schema: "schema.sql"
+  - engine: "postgresql"
+    schema: "schema.sql"
     queries: "query.sql"
     gen:
       go:
@@ -11,3 +12,25 @@ sql:
         emit_prepared_queries: false
         emit_interface: true
         emit_exact_table_names: false
+        overrides:
+          - db_type: "timestamptz"
+            nullable: false
+            go_type:
+              type: "time.Time"
+          - db_type: "timestamptz"
+            nullable: true
+            go_type:
+              type: "time.Time"
+              pointer: true
+          - db_type: "text"
+            nullable: true
+            go_type:
+              type: "string"
+              pointer: true
+          - db_type: "bool"
+            nullable: true
+            go_type:
+              type: "bool"
+              pointer: true
+          - db_type: "bigint"
+            go_type: "int64"

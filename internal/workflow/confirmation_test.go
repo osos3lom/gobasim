@@ -156,9 +156,13 @@ func TestNonAffirmationCancelsPendingAction(t *testing.T) {
 		ExpiresAt: time.Now().Add(5 * time.Minute),
 	}}
 
+	call := 0
 	e := newConfirmTestEngine(q, func(ctx context.Context, m []Message, tools []ToolDefinition, temp float32, maxTokens int) (*Message, error) {
-		t.Fatal("LLM must not be called when cancelling a confirmation")
-		return nil, nil
+		call++
+		if call == 1 { // ClassifyIntent
+			return &Message{Role: "assistant", Content: "other"}, nil
+		}
+		return &Message{Role: "assistant", Content: "حسناً، تم إلغاء العملية."}, nil
 	})
 
 	state := linkedState("لا خليها زي ما هي")
@@ -176,7 +180,7 @@ func TestNonAffirmationCancelsPendingAction(t *testing.T) {
 	if out["status"] != "cancelled" {
 		t.Fatalf("expected cancelled audit status, got %v", out)
 	}
-	if !strings.Contains(state.FinalReply, "ألغيت") {
+	if !strings.Contains(state.FinalReply, "إلغاء") && !strings.Contains(state.FinalReply, "ألغيت") {
 		t.Fatalf("expected cancellation reply, got %q", state.FinalReply)
 	}
 }
@@ -286,5 +290,41 @@ func TestRecordExpenseRequiresConfirmation(t *testing.T) {
 	// The restatement must include the amount so the user confirms the real number.
 	if !strings.Contains(state.FinalReply, "1200") {
 		t.Fatalf("expected the amount restated in the confirmation, got %q", state.FinalReply)
+	}
+}
+
+func TestConfirmation_PrefixAffirmation(t *testing.T) {
+	for _, yes := range []string{"نعم متأكد", "نعم، أكيد", "yes please", "ok thanks"} {
+		if !isAffirmation(yes) {
+			t.Errorf("expected %q to be accepted as an affirmation", yes)
+		}
+	}
+}
+
+func TestConfirmation_CancelPassthrough(t *testing.T) {
+	q := &confirmFakeQuerier{pending: &database.PendingConfirmation{
+		ChatID:    "123@s.whatsapp.net",
+		ToolID:    "record_expense",
+		ExpiresAt: time.Now().Add(10 * time.Minute),
+	}}
+	call := 0
+	e := newConfirmTestEngine(q, func(ctx context.Context, m []Message, tools []ToolDefinition, temp float32, maxTokens int) (*Message, error) {
+		call++
+		if call == 1 { // ClassifyIntent
+			return &Message{Role: "assistant", Content: "other"}, nil
+		}
+		return &Message{Role: "assistant", Content: "أهلاً!"}, nil
+	})
+
+	state := linkedState("مرحبا")
+	if err := e.Execute(context.Background(), state); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if q.pending != nil {
+		t.Fatal("expected pending confirmation to be cancelled/deleted")
+	}
+	if state.FinalReply != "أهلاً!" {
+		t.Fatalf("expected the message to be processed normally, got %q", state.FinalReply)
 	}
 }

@@ -73,6 +73,8 @@ func toString(v interface{}) string {
 	return string(b)
 }
 
+var webhookClient = &http.Client{Timeout: 10 * time.Second}
+
 func dispatch(r report) {
 	if webhookURL == "" {
 		return
@@ -82,8 +84,7 @@ func dispatch(r report) {
 		if err != nil {
 			return
 		}
-		client := &http.Client{Timeout: 10 * time.Second}
-		resp, err := client.Post(webhookURL, "application/json", bytes.NewReader(body))
+		resp, err := webhookClient.Post(webhookURL, "application/json", bytes.NewReader(body))
 		if err != nil {
 			log.Printf("Monitor: failed to post error report: %v", err)
 			return

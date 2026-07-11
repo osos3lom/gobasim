@@ -44,6 +44,13 @@ type Config struct {
 	VoiceStorageBucket string
 	VoiceStoragePrefix string
 	VoiceSpoolDir      string
+
+	// DefaultOrgID is the org assigned to a resolved-but-orgless privileged
+	// actor (super_admin/admin/owner) so they can operate over WhatsApp when
+	// their ERP record carries no orgIds. Empty disables the fallback. See
+	// internal/erp.ApplyDefaultOrg — this closes the M9 gap where super-admin
+	// phones resolved with no org and the tool loop bailed as "unlinked".
+	DefaultOrgID string
 }
 
 func LoadConfig() *Config {
@@ -64,7 +71,7 @@ func LoadConfig() *Config {
 
 	nimModel := os.Getenv("NIM_MODEL")
 	if nimModel == "" {
-		nimModel = "meta/llama-3.3-70b-instruct"
+		nimModel = "meta/llama-3.1-70b-instruct"
 	}
 
 	openaiAPIBase := os.Getenv("OPENAI_API_BASE")
@@ -141,6 +148,7 @@ func LoadConfig() *Config {
 		VoiceStorageBucket: os.Getenv("VOICE_STORAGE_BUCKET"),
 		VoiceStoragePrefix: getEnvDefault("VOICE_STORAGE_PREFIX", "voice-notes"),
 		VoiceSpoolDir:      getEnvDefault("VOICE_SPOOL_DIR", "voice-spool"),
+		DefaultOrgID:       os.Getenv("DEFAULT_ORG_ID"),
 	}
 }
 

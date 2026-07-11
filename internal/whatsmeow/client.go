@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -36,6 +37,8 @@ const (
 
 type WhatsAppManager struct {
 	Client            *whatsmeow.Client
+	dbContainer       *sqlstore.Container
+	eventHandler      func(interface{})
 	state             ConnectionState
 	qrString          string
 	pairCode          string
@@ -134,8 +137,38 @@ func (m *WhatsAppManager) Initialize(ctx context.Context, eventHandler func(inte
 	client.AddEventHandler(eventHandler)
 	m.mu.Lock()
 	m.Client = client
+	m.dbContainer = dbContainer
+	m.eventHandler = eventHandler
 	m.mu.Unlock()
 
+	return nil
+}
+
+func (m *WhatsAppManager) RecreateClient() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.Client != nil {
+		m.Client.Disconnect()
+	}
+
+	if m.dbContainer == nil {
+		return fmt.Errorf("dbContainer not initialized")
+	}
+
+	// Delete existing device locally
+	if m.Client != nil && m.Client.Store != nil {
+		_ = m.Client.Store.Delete(context.Background())
+	}
+
+	deviceStore := m.dbContainer.NewDevice()
+	clientLog := waLog.Stdout("WhatsApp", "WARN", true)
+	client := whatsmeow.NewClient(deviceStore, clientLog)
+
+	if m.eventHandler != nil {
+		client.AddEventHandler(m.eventHandler)
+	}
+	m.Client = client
 	return nil
 }
 
@@ -152,6 +185,14 @@ func (m *WhatsAppManager) Connect(ctx context.Context) error {
 		// Device is already logged in, connect directly
 		err := client.Connect()
 		if err != nil {
+			if strings.Contains(err.Error(), "deleted device") {
+				log.Println("WhatsApp: detected deleted device session on connect. Recreating client...")
+				if errRec := m.RecreateClient(); errRec != nil {
+					return fmt.Errorf("failed to recreate client after session deletion: %w (original error: %v)", errRec, err)
+				}
+				// Try connecting again with the new client
+				return m.Connect(ctx)
+			}
 			return err
 		}
 		m.SetState(StateConnected, "", "")
@@ -161,6 +202,13 @@ func (m *WhatsAppManager) Connect(ctx context.Context) error {
 	// Device needs linking. Connect socket.
 	err := client.Connect()
 	if err != nil {
+		if strings.Contains(err.Error(), "deleted device") {
+			log.Println("WhatsApp: detected deleted device session on connect. Recreating client...")
+			if errRec := m.RecreateClient(); errRec != nil {
+				return fmt.Errorf("failed to recreate client after session deletion: %w (original error: %v)", errRec, err)
+			}
+			return m.Connect(ctx)
+		}
 		return err
 	}
 
@@ -214,7 +262,11 @@ func (m *WhatsAppManager) Logout(ctx context.Context) error {
 	}
 
 	if err := client.Logout(ctx); err != nil {
-		return fmt.Errorf("whatsapp logout failed: %w", err)
+		log.Printf("Warning: WhatsApp server-side logout failed: %v. Recreating client locally...", err)
+	}
+
+	if err := m.RecreateClient(); err != nil {
+		return fmt.Errorf("failed to recreate client during logout: %w", err)
 	}
 
 	m.SetState(StateDisconnected, "", "")

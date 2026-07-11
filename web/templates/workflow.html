@@ -1,18 +1,18 @@
 {{template "layout" .}}
 
 {{define "workflow-content"}}
-<div class="space-y-8 max-w-4xl">
+<div class="space-y-8 max-w-5xl">
 
     <!-- Header Description -->
     <div class="flex items-center justify-between gap-4">
-        <p class="text-sm text-gray-400">View and update the active prompts and responses for your Sawt agents in Neon DB. Changes apply immediately to WhatsApp without restarting the server.</p>
+        <p class="text-sm text-gray-400">Configure each agent's compute, prompt, capabilities, and voice. Changes apply immediately to WhatsApp &mdash; the engine re-reads the agent row per message, no restart required.</p>
         <button type="button" onclick="document.getElementById('new-agent-dialog').classList.remove('hidden')"
             class="shrink-0 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl transition duration-200 active:scale-95">
             + New Agent
         </button>
     </div>
 
-    <!-- Feedback Banner (Target for HTMX updates, and for create-agent errors) -->
+    <!-- Feedback Banner (HTMX target, and create-agent errors) -->
     <div id="feedback" class="transition duration-300">
         {{if .Error}}
         <div class="bg-red-950/40 border border-red-900/60 text-red-200 px-4 py-3 rounded-xl text-sm flex items-center space-x-2">
@@ -22,11 +22,11 @@
         {{end}}
     </div>
 
-    <!-- New Agent dialog (plain CSS toggle, no JS framework needed) -->
+    <!-- New Agent dialog -->
     <div id="new-agent-dialog" class="hidden fixed inset-0 z-40 flex items-center justify-center p-4 bg-black/60">
         <div class="w-full max-w-md p-6 rounded-2xl glass border border-indigo-950/40 space-y-4">
             <h3 class="text-lg font-bold text-white">Create a new agent</h3>
-            <p class="text-xs text-gray-400">Starts blank with the default ASR/LLM/TTS providers &mdash; edit its prompt below once it's created.</p>
+            <p class="text-xs text-gray-400">Starts with provider-aligned defaults (OpenAI LLM, Google TTS, 8-turn memory) &mdash; tune every block below once it's created.</p>
             <form action="/dashboard/workflows/create" method="POST" class="space-y-4">
                 <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
                 <div>
@@ -36,76 +36,230 @@
                 </div>
                 <div class="flex justify-end gap-3 pt-2">
                     <button type="button" onclick="document.getElementById('new-agent-dialog').classList.add('hidden')"
-                        class="px-4 py-2 text-gray-400 hover:text-gray-200 text-xs font-semibold rounded-xl transition duration-200">
-                        Cancel
-                    </button>
+                        class="px-4 py-2 text-gray-400 hover:text-gray-200 text-xs font-semibold rounded-xl transition duration-200">Cancel</button>
                     <button type="submit"
-                        class="px-6 py-2.5 bg-gradient-to-r from-indigo-500 to-indigo-700 hover:from-indigo-600 hover:to-indigo-800 text-white font-semibold text-sm rounded-xl transition duration-200 shadow-md shadow-indigo-500/10 active:scale-[0.98]">
-                        Create
-                    </button>
+                        class="px-6 py-2.5 bg-gradient-to-r from-indigo-500 to-indigo-700 hover:from-indigo-600 hover:to-indigo-800 text-white font-semibold text-sm rounded-xl transition duration-200 shadow-md shadow-indigo-500/10 active:scale-[0.98]">Create</button>
                 </div>
             </form>
         </div>
     </div>
 
-    {{range .Agents}}
-    <!-- Agent Editor Box -->
-    <div class="glass p-8 rounded-2xl border border-indigo-950/40 relative space-y-6">
+    {{range $agent := .Agents}}
+    <!-- Agent Editor -->
+    <div class="glass p-8 rounded-2xl border border-indigo-950/40 relative space-y-8">
         <div class="flex items-center justify-between border-b border-indigo-950/50 pb-4">
             <div>
-                <h3 class="text-xl font-bold text-white">{{.Name}}</h3>
-                <span class="text-xs text-indigo-400 font-mono">ID: {{.ID}}</span>
+                <h3 class="text-xl font-bold text-white">{{$agent.Name}}</h3>
+                <span class="text-xs text-indigo-400 font-mono">ID: {{$agent.ID}}</span>
             </div>
             <div class="flex items-center gap-2">
-                {{if .HasUnpublishedChanges}}
-                <span class="text-xs bg-amber-950/60 text-amber-300 px-3 py-1 rounded-full font-semibold border border-amber-900" title="This agent was edited after its last publish">Unpublished changes</span>
+                {{if $agent.HasUnpublishedChanges}}
+                <span class="text-xs bg-amber-950/60 text-amber-300 px-3 py-1 rounded-full font-semibold border border-amber-900" title="Edited after last publish">Unpublished changes</span>
                 {{end}}
-                <span class="text-xs bg-indigo-950/60 text-indigo-300 px-3 py-1 rounded-full font-semibold border border-indigo-900 capitalize">{{.Status}}</span>
+                <span class="text-xs bg-indigo-950/60 text-indigo-300 px-3 py-1 rounded-full font-semibold border border-indigo-900 capitalize">{{$agent.Status}}</span>
             </div>
         </div>
 
-        <!-- Update Form using HTMX -->
-        <form hx-post="/dashboard/workflows/update" hx-target="#feedback" hx-swap="innerHTML" class="space-y-6">
-            <!-- Hidden ID -->
+        <form hx-post="/dashboard/workflows/update" hx-target="#feedback" hx-swap="innerHTML" class="space-y-8">
             <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-            <input type="hidden" name="id" value="{{.ID}}">
-            <input type="hidden" name="name" value="{{.Name}}">
+            <input type="hidden" name="id" value="{{$agent.ID}}">
 
-            <!-- System Prompt Textarea -->
-            <div>
-                <label class="block text-sm font-semibold text-gray-300 mb-2">System Instructions / Prompt</label>
-                <textarea name="system_prompt" rows="8" required 
-                    class="w-full bg-[#03060c]/60 border border-indigo-950/80 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-xl px-4 py-3 text-sm text-slate-300 font-mono leading-relaxed outline-none transition duration-200 resize-y">{{.SystemPrompt}}</textarea>
-                <span class="text-xs text-gray-500 mt-1 block">Injected as the primary instructions for the LLM during the operations loop. Do not include markdown formatting inside responses.</span>
-            </div>
+            <!-- ============ BLOCK 1 — LLM Brain & Telemetry ============ -->
+            <section class="space-y-4">
+                <div class="flex items-center gap-2">
+                    <span class="text-indigo-400">&#9673;</span>
+                    <h4 class="text-sm font-bold text-white uppercase tracking-wide">LLM Brain &amp; Telemetry</h4>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-400 mb-1">Agent name</label>
+                        <input type="text" name="name" value="{{$agent.Name}}" maxlength="100"
+                            class="w-full bg-[#03060c]/60 border border-indigo-950/80 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-lg px-3 py-2 text-xs text-slate-300 outline-none transition">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-400 mb-1">Vendor (cascade tier)</label>
+                        <select name="llm_vendor" class="w-full bg-[#03060c]/60 border border-indigo-950/80 focus:border-indigo-500 rounded-lg px-3 py-2 text-xs text-slate-300 outline-none transition">
+                            <option value="nim" {{if eq $agent.LLM.Vendor "nim"}}selected{{end}}>NVIDIA NIM (Rank 1)</option>
+                            <option value="openai" {{if eq $agent.LLM.Vendor "openai"}}selected{{end}}>OpenAI-compatible (Fallback)</option>
+                            <option value="groq" {{if eq $agent.LLM.Vendor "groq"}}selected{{end}}>Groq</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-400 mb-1">API Endpoint Base URL</label>
+                        <input type="text" name="llm_url" value="{{$agent.LLM.URL}}" placeholder="https://integrate.api.nvidia.com/v1"
+                            class="w-full bg-[#03060c]/60 border border-indigo-950/80 focus:border-indigo-500 rounded-lg px-3 py-2 text-xs text-slate-300 font-mono outline-none transition">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-400 mb-1">Env Var Key lookup</label>
+                        <input type="text" name="llm_api_key_env" value="{{$agent.LLM.APIKeyEnv}}" placeholder="NIM_API_KEY"
+                            class="w-full bg-[#03060c]/60 border border-indigo-950/80 focus:border-indigo-500 rounded-lg px-3 py-2 text-xs text-slate-300 font-mono outline-none transition">
+                        <span class="text-[10px] text-gray-600">Store the variable NAME, never the secret itself.</span>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-400 mb-1">Model</label>
+                        <input type="text" name="llm_model" value="{{$agent.LLM.Model}}" placeholder="meta/llama-3.1-70b-instruct"
+                            class="w-full bg-[#03060c]/60 border border-indigo-950/80 focus:border-indigo-500 rounded-lg px-3 py-2 text-xs text-slate-300 font-mono outline-none transition">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-400 mb-1">Context Window &mdash; max_history turns</label>
+                        <input type="number" name="max_history" value="{{$agent.MaxHistory}}" min="1" max="{{$.HistoryMax}}"
+                            class="w-full bg-[#03060c]/60 border border-indigo-950/80 focus:border-indigo-500 rounded-lg px-3 py-2 text-xs text-slate-300 outline-none transition">
+                        <span class="text-[10px] text-gray-600">Clamped to [1,{{$.HistoryMax}}]; engine default {{$.HistoryDefault}}.</span>
+                    </div>
+                </div>
+                <div class="flex flex-wrap gap-4 pt-1">
+                    <label class="flex items-center gap-1.5 text-xs text-gray-400"><input type="checkbox" name="turn_detection" class="h-4 w-4 accent-indigo-500" {{if $agent.TurnDetection}}checked{{end}}> Turn detection</label>
+                    <label class="flex items-center gap-1.5 text-xs text-gray-400"><input type="checkbox" name="start_of_speech" class="h-4 w-4 accent-indigo-500" {{if $agent.StartOfSpeech}}checked{{end}}> Start of speech</label>
+                    <label class="flex items-center gap-1.5 text-xs text-gray-400"><input type="checkbox" name="end_of_speech" class="h-4 w-4 accent-indigo-500" {{if $agent.EndOfSpeech}}checked{{end}}> End of speech</label>
+                    <label class="flex items-center gap-1.5 text-xs text-gray-400"><input type="checkbox" name="selective_attention_locking" class="h-4 w-4 accent-indigo-500" {{if $agent.SelectiveAttentionLocking}}checked{{end}}> Attention locking</label>
+                    <label class="flex items-center gap-1.5 text-xs text-gray-400"><input type="checkbox" name="filler_words" class="h-4 w-4 accent-indigo-500" {{if $agent.FillerWords}}checked{{end}}> Filler words</label>
+                </div>
+            </section>
 
-            <!-- Double Columns for Greetings/Failure Messages -->
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <!-- Greeting -->
+            <!-- ============ BLOCK 2 — Agent SOUL Prompting Core ============ -->
+            <section class="space-y-4 border-t border-indigo-950/40 pt-6">
+                <div class="flex items-center gap-2">
+                    <span class="text-indigo-400">&#9673;</span>
+                    <h4 class="text-sm font-bold text-white uppercase tracking-wide">Agent SOUL &mdash; Master System Prompt</h4>
+                </div>
                 <div>
-                    <label class="block text-sm font-semibold text-gray-300 mb-2">Greeting Message</label>
-                    <textarea name="greeting_message" rows="3" 
-                        class="w-full bg-[#03060c]/60 border border-indigo-950/80 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-xl px-4 py-3 text-sm text-slate-300 leading-relaxed outline-none transition duration-200 resize-none">{{.GreetingMessage}}</textarea>
+                    <textarea name="system_prompt" rows="10" required
+                        class="w-full bg-[#03060c]/60 border border-indigo-950/80 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-xl px-4 py-3 text-sm text-slate-300 font-mono leading-relaxed outline-none transition resize-y">{{$agent.SystemPrompt}}</textarea>
+                </div>
+                <!-- Context-fold visualization (read-only) -->
+                <div class="rounded-xl border border-indigo-950/60 bg-[#03060c]/40 p-4 text-xs text-gray-400 space-y-2">
+                    <p class="font-semibold text-indigo-300">How context folds at runtime</p>
+                    <div class="flex flex-wrap items-center gap-2 font-mono text-[11px]">
+                        <span class="px-2 py-1 rounded bg-indigo-950/60 border border-indigo-900 text-indigo-200">Master System Prompt</span>
+                        <span class="text-gray-600">+</span>
+                        <span class="px-2 py-1 rounded bg-emerald-950/50 border border-emerald-900 text-emerald-200">rolling summary (conversation_state)</span>
+                        <span class="text-gray-600">+</span>
+                        <span class="px-2 py-1 rounded bg-slate-800/60 border border-slate-700 text-slate-200">last {{$agent.MaxHistory}} turns</span>
+                        <span class="text-gray-600">&rarr;</span>
+                        <span class="px-2 py-1 rounded bg-indigo-600/30 border border-indigo-500 text-indigo-100">LLM context</span>
+                    </div>
+                    <p>Older turns beyond the window are summarized in a background thread and re-injected here, so the agent keeps long-term memory without exceeding the turn budget.</p>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-400 mb-1">Greeting Message</label>
+                        <textarea name="greeting_message" rows="3"
+                            class="w-full bg-[#03060c]/60 border border-indigo-950/80 focus:border-indigo-500 rounded-xl px-4 py-3 text-sm text-slate-300 outline-none transition resize-none">{{$agent.GreetingMessage}}</textarea>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-400 mb-1">Fallback Failure Message</label>
+                        <textarea name="failure_message" rows="3"
+                            class="w-full bg-[#03060c]/60 border border-indigo-950/80 focus:border-indigo-500 rounded-xl px-4 py-3 text-sm text-slate-300 outline-none transition resize-none">{{$agent.FailureMessage}}</textarea>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ============ BLOCK 3 — Three-Tier Capabilities ============ -->
+            <section class="space-y-5 border-t border-indigo-950/40 pt-6">
+                <div class="flex items-center gap-2">
+                    <span class="text-indigo-400">&#9673;</span>
+                    <h4 class="text-sm font-bold text-white uppercase tracking-wide">Capabilities &mdash; Skills / MCP / Sub-agents</h4>
                 </div>
 
-                <!-- Failure -->
+                <!-- Tier 1: Skills manifest -->
                 <div>
-                    <label class="block text-sm font-semibold text-gray-300 mb-2">Fallback Failure Message</label>
-                    <textarea name="failure_message" rows="3" 
-                        class="w-full bg-[#03060c]/60 border border-indigo-950/80 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-xl px-4 py-3 text-sm text-slate-300 leading-relaxed outline-none transition duration-200 resize-none">{{.FailureMessage}}</textarea>
+                    <p class="text-xs font-semibold text-gray-300 mb-2">Skills Manifest <span class="text-gray-600 font-normal">&mdash; local procedural .md files, progressively disclosed</span></p>
+                    <div class="js-list-editor" data-field="skills"
+                         data-text="name:Skill Name,path:File (.md)" data-bool="enabled:Enabled"
+                         data-init="{{$agent.SkillsJSON}}"></div>
                 </div>
-            </div>
+
+                <!-- Tier 2: MCP connectivity -->
+                <div>
+                    <p class="text-xs font-semibold text-gray-300 mb-2">MCP Connectivity Suite <span class="text-gray-600 font-normal">&mdash; JSON-RPC server hooks; external tools require in-chat confirmation</span></p>
+                    <div class="js-list-editor" data-field="mcp_servers"
+                         data-text="name:Server Name,url:JSON-RPC URL" data-bool="enabled:Enabled"
+                         data-init="{{$agent.MCPJSON}}"></div>
+                </div>
+
+                <!-- Tier 3: Sub-agent delegation -->
+                <div class="rounded-xl border border-indigo-950/60 bg-[#03060c]/40 p-4 space-y-3">
+                    <label class="flex items-center gap-2 text-xs font-semibold text-gray-300">
+                        <input type="checkbox" name="sub_agents_enabled" class="h-4 w-4 accent-indigo-500" {{if $agent.SubAgents.Enabled}}checked{{end}}>
+                        Allow this agent to spawn detached sub-reasoning loops
+                    </label>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-[11px] font-semibold text-gray-500 mb-1">Token threshold (0&ndash;{{$.SubTokensMax}})</label>
+                            <input type="number" name="sub_agents_max_tokens" value="{{$agent.SubAgents.MaxTokens}}" min="0" max="{{$.SubTokensMax}}"
+                                class="w-full bg-[#03060c]/60 border border-indigo-950/80 focus:border-indigo-500 rounded-lg px-3 py-2 text-xs text-slate-300 outline-none transition">
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-semibold text-gray-500 mb-1">Delegable agents</label>
+                            <div class="flex flex-wrap gap-3">
+                                {{range $da := $.DelegateAgents}}
+                                <label class="flex items-center gap-1 text-xs text-gray-400 capitalize">
+                                    <input type="checkbox" name="sub_agents_allowed" value="{{$da}}" class="h-4 w-4 accent-indigo-500" {{if $agent.DelegateChecked $da}}checked{{end}}>
+                                    {{$da}}
+                                </label>
+                                {{end}}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ============ BLOCK 4 — Aegis Audio & Speech (TTS) ============ -->
+            <section class="space-y-4 border-t border-indigo-950/40 pt-6">
+                <div class="flex items-center gap-2">
+                    <span class="text-indigo-400">&#9673;</span>
+                    <h4 class="text-sm font-bold text-white uppercase tracking-wide">Aegis Audio &amp; Speech Profile</h4>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-400 mb-1">Voice Engine (cascade)</label>
+                        <select name="tts_vendor" class="w-full bg-[#03060c]/60 border border-indigo-950/80 focus:border-indigo-500 rounded-lg px-3 py-2 text-xs text-slate-300 outline-none transition">
+                            <option value="google" {{if eq $agent.TTS.Vendor "google"}}selected{{end}}>Google Cloud TTS</option>
+                            <option value="huggingface" {{if eq $agent.TTS.Vendor "huggingface"}}selected{{end}}>Hugging Face</option>
+                            <option value="local" {{if eq $agent.TTS.Vendor "local"}}selected{{end}}>Local gTTS</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-400 mb-1">Language Code</label>
+                        <input type="text" name="tts_language_code" value="{{$agent.TTS.LanguageCode}}" placeholder="ar-XA"
+                            class="w-full bg-[#03060c]/60 border border-indigo-950/80 focus:border-indigo-500 rounded-lg px-3 py-2 text-xs text-slate-300 font-mono outline-none transition">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-400 mb-1">Gender</label>
+                        <select name="tts_gender" class="w-full bg-[#03060c]/60 border border-indigo-950/80 focus:border-indigo-500 rounded-lg px-3 py-2 text-xs text-slate-300 outline-none transition">
+                            <option value="FEMALE" {{if eq $agent.TTS.Gender "FEMALE"}}selected{{end}}>Female</option>
+                            <option value="MALE" {{if eq $agent.TTS.Gender "MALE"}}selected{{end}}>Male</option>
+                            <option value="NEUTRAL" {{if eq $agent.TTS.Gender "NEUTRAL"}}selected{{end}}>Neutral</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-400 mb-1">Voice Name</label>
+                        <input type="text" name="tts_voice_name" value="{{$agent.TTS.VoiceName}}" placeholder="ar-XA-Wavenet-B"
+                            class="w-full bg-[#03060c]/60 border border-indigo-950/80 focus:border-indigo-500 rounded-lg px-3 py-2 text-xs text-slate-300 font-mono outline-none transition">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-400 mb-1">Neural Model variant</label>
+                        <input type="text" name="tts_model" value="{{$agent.TTS.Model}}" placeholder="Wavenet"
+                            class="w-full bg-[#03060c]/60 border border-indigo-950/80 focus:border-indigo-500 rounded-lg px-3 py-2 text-xs text-slate-300 font-mono outline-none transition">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-400 mb-1">Speed</label>
+                        <input type="number" name="tts_speed" value="{{$agent.TTS.Speed}}" min="0.25" max="4" step="0.05"
+                            class="w-full bg-[#03060c]/60 border border-indigo-950/80 focus:border-indigo-500 rounded-lg px-3 py-2 text-xs text-slate-300 outline-none transition">
+                    </div>
+                </div>
+            </section>
 
             <!-- Status + Submit -->
-            <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pt-2">
+            <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-t border-indigo-950/40 pt-6">
                 <div class="flex items-center gap-3">
-                    <label for="status-{{.ID}}" class="text-sm font-semibold text-gray-300">Status</label>
-                    <select id="status-{{.ID}}" name="status"
-                        class="bg-[#03060c]/60 border border-indigo-950/80 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-xl px-3 py-2 text-sm text-slate-300 outline-none transition duration-200">
-                        <option value="draft" {{if eq .Status "draft"}}selected{{end}}>Draft</option>
-                        <option value="published" {{if eq .Status "published"}}selected{{end}}>Published</option>
+                    <label for="status-{{$agent.ID}}" class="text-sm font-semibold text-gray-300">Status</label>
+                    <select id="status-{{$agent.ID}}" name="status"
+                        class="bg-[#03060c]/60 border border-indigo-950/80 focus:border-indigo-500 rounded-xl px-3 py-2 text-sm text-slate-300 outline-none transition">
+                        <option value="draft" {{if eq $agent.Status "draft"}}selected{{end}}>Draft</option>
+                        <option value="published" {{if eq $agent.Status "published"}}selected{{end}}>Published</option>
                     </select>
-                    <span class="text-xs text-gray-500">Publishing requires a non-empty system prompt. Only published agents can be assigned to chats.</span>
+                    <span class="text-xs text-gray-500">Publishing requires a non-empty system prompt.</span>
                 </div>
                 <button type="submit"
                     class="px-6 py-3 bg-gradient-to-r from-indigo-500 to-indigo-700 hover:from-indigo-600 hover:to-indigo-800 text-white font-semibold text-sm rounded-xl transition duration-200 shadow-md shadow-indigo-500/10 active:scale-[0.98]">
@@ -116,9 +270,10 @@
     </div>
     {{else}}
     <div class="glass p-8 text-center text-gray-400 rounded-2xl border border-indigo-950/40">
-        No active agents found in the `agents` database table. Create an agent records to edit system workflows.
+        No active agents found in the `agents` table. Create an agent to edit its workflow.
     </div>
     {{end}}
 
 </div>
+<script src="/static/workflow.js" defer></script>
 {{end}}

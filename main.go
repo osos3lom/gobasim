@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"sawt-go/config"
 	"sawt-go/database"
+	"sawt-go/internal/agentcfg"
 	"sawt-go/internal/audio"
 	"sawt-go/internal/erp"
 	"sawt-go/internal/monitor"
@@ -150,14 +151,13 @@ func main() {
 	if cfg.VoiceStorageBucket != "" {
 		up, err := voicenotes.NewGCSUploader(ctx, cfg.VoiceStorageBucket)
 		if err != nil {
-			log.Printf("WARNING: voice-note archival disabled — GCS client init failed: %v", err)
-		} else if voiceStore, err = voicenotes.NewStore(cfg.VoiceStoragePrefix, cfg.VoiceSpoolDir, queries, up); err != nil {
-			log.Printf("WARNING: voice-note archival disabled — %v", err)
-			voiceStore = nil
-		} else {
-			voiceStore.StartWorker(ctx)
-			log.Printf("Voice notes: archiving to gs://%s/%s (spool: %s)", cfg.VoiceStorageBucket, cfg.VoiceStoragePrefix, cfg.VoiceSpoolDir)
+			log.Fatalf("Fatal: VOICE_STORAGE_BUCKET is set but GCS client init failed: %v", err)
 		}
+		if voiceStore, err = voicenotes.NewStore(cfg.VoiceStoragePrefix, cfg.VoiceSpoolDir, queries, up); err != nil {
+			log.Fatalf("Fatal: VOICE_STORAGE_BUCKET is set but voice-note store init failed: %v", err)
+		}
+		voiceStore.StartWorker(ctx)
+		log.Printf("Voice notes: archiving to gs://%s/%s (spool: %s)", cfg.VoiceStorageBucket, cfg.VoiceStoragePrefix, cfg.VoiceSpoolDir)
 	} else {
 		log.Println("Voice notes: archival disabled (VOICE_STORAGE_BUCKET not set).")
 	}
@@ -198,7 +198,10 @@ func main() {
 			log.Println("WhatsApp connection established.")
 		case *events.LoggedOut:
 			waMgr.SetState(waClient.StateDisconnected, "", "")
-			log.Println("Logged out from WhatsApp. Re-pairing is required.")
+			log.Println("Logged out from WhatsApp. Re-pairing is required. Recreating client locally...")
+			if err := waMgr.RecreateClient(); err != nil {
+				log.Printf("Warning: failed to clear local WhatsApp device store: %v", err)
+			}
 		}
 	})
 	if err != nil {
@@ -334,8 +337,9 @@ func runRetention(ctx context.Context, queries *database.Queries, days int) {
 		// bucket lifecycle rule matching RETENTION_DAYS (see DEPLOYMENT.md).
 		"wa_voice_notes": queries.PurgeWaVoiceNotesBefore,
 		// Agentic-gateway audit tables (C1 dedup ledger, C2 tool step log).
-		"processed_messages": queries.PurgeProcessedMessagesBefore,
-		"tool_executions":    queries.PurgeToolExecutionsBefore,
+		"processed_messages":    queries.PurgeProcessedMessagesBefore,
+		"tool_executions":       queries.PurgeToolExecutionsBefore,
+		"pending_confirmations": queries.PurgeExpiredConfirmations,
 	} {
 		if err := fn(ctx, cutoff); err != nil {
 			monitor.ReportError(ctx, "retention:"+name, err)
@@ -520,7 +524,26 @@ func handleIncomingMessage(
 		incomingAudio, err = client.Download(ctx, evt.Message.AudioMessage)
 		if err != nil {
 			trace.Logf(ctx, "Inbound: Failed to download audio: %v", err)
-			sendTextReply(ctx, client, evt.Info.Chat, "عذراً، لم أتمكن من تحميل الرسالة الصوتية.")
+			errorMsg := "عذراً، لم أتمكن من تحميل الرسالة الصوتية."
+			sendTextReply(ctx, client, evt.Info.Chat, errorMsg)
+			_ = queries.CreateWaMessage(ctx, database.CreateWaMessageParams{
+				ID:        evt.Info.ID,
+				ChatID:    evt.Info.Chat.String(),
+				Direction: "in",
+				Sender:    "contact",
+				MsgType:   "voice",
+				Content:   "[Failed to download audio message]",
+				Status:    "failed",
+			})
+			_ = queries.CreateWaMessage(ctx, database.CreateWaMessageParams{
+				ID:        evt.Info.ID + "-out",
+				ChatID:    evt.Info.Chat.String(),
+				Direction: "out",
+				Sender:    "bot",
+				MsgType:   "text",
+				Content:   errorMsg,
+				Status:    "sent",
+			})
 			return
 		}
 
@@ -541,7 +564,26 @@ func handleIncomingMessage(
 		wavBytes, err := audio.OggToWav(incomingAudio)
 		if err != nil {
 			trace.Logf(ctx, "Inbound: Audio transcoding failed: %v", err)
-			sendTextReply(ctx, client, evt.Info.Chat, "عذراً، فشل معالجة الملف الصوتي.")
+			errorMsg := "عذراً، فشل معالجة الملف الصوتي."
+			sendTextReply(ctx, client, evt.Info.Chat, errorMsg)
+			_ = queries.CreateWaMessage(ctx, database.CreateWaMessageParams{
+				ID:        evt.Info.ID,
+				ChatID:    evt.Info.Chat.String(),
+				Direction: "in",
+				Sender:    "contact",
+				MsgType:   "voice",
+				Content:   "[Failed to transcode audio message]",
+				Status:    "failed",
+			})
+			_ = queries.CreateWaMessage(ctx, database.CreateWaMessageParams{
+				ID:        evt.Info.ID + "-out",
+				ChatID:    evt.Info.Chat.String(),
+				Direction: "out",
+				Sender:    "bot",
+				MsgType:   "text",
+				Content:   errorMsg,
+				Status:    "sent",
+			})
 			return
 		}
 
@@ -553,7 +595,26 @@ func handleIncomingMessage(
 
 		if err != nil {
 			monitor.ReportError(ctx, "stt", err)
-			sendTextReply(ctx, client, evt.Info.Chat, "عذراً، لم أتمكن من تحويل الصوت إلى نص.")
+			errorMsg := "عذراً، لم أتمكن من تحويل الصوت إلى نص."
+			sendTextReply(ctx, client, evt.Info.Chat, errorMsg)
+			_ = queries.CreateWaMessage(ctx, database.CreateWaMessageParams{
+				ID:        evt.Info.ID,
+				ChatID:    evt.Info.Chat.String(),
+				Direction: "in",
+				Sender:    "contact",
+				MsgType:   "voice",
+				Content:   "[Failed to transcribe audio message]",
+				Status:    "failed",
+			})
+			_ = queries.CreateWaMessage(ctx, database.CreateWaMessageParams{
+				ID:        evt.Info.ID + "-out",
+				ChatID:    evt.Info.Chat.String(),
+				Direction: "out",
+				Sender:    "bot",
+				MsgType:   "text",
+				Content:   errorMsg,
+				Status:    "sent",
+			})
 			return
 		}
 
@@ -598,6 +659,12 @@ func handleIncomingMessage(
 	if err != nil {
 		monitor.ReportError(ctx, "identity", err)
 	}
+	// Give a resolved-but-orgless privileged actor (super_admin/admin/owner) a
+	// working org so the ERP tool loop doesn't bail as "unlinked". Closes the
+	// M9 gap where super-admin phones resolved with empty OrgIDs (D-6a).
+	if erp.ApplyDefaultOrg(identity, cfg.DefaultOrgID) {
+		trace.Logf(ctx, "Inbound: applied DEFAULT_ORG_ID=%q for privileged orgless actor %s", cfg.DefaultOrgID, identity.UID)
+	}
 
 	// 3. Load conversation memory, then invoke the workflow with real history
 	summary, history, err := wfEngine.LoadConversation(ctx, evt.Info.Chat.String())
@@ -623,7 +690,17 @@ func handleIncomingMessage(
 
 	if err != nil {
 		monitor.ReportError(ctx, "workflow", err)
-		sendTextReply(ctx, client, evt.Info.Chat, "حدث خطأ أثناء معالجة طلبك.")
+		errorMsg := "حدث خطأ أثناء معالجة طلبك."
+		sendTextReply(ctx, client, evt.Info.Chat, errorMsg)
+		_ = queries.CreateWaMessage(ctx, database.CreateWaMessageParams{
+			ID:        evt.Info.ID + "-out",
+			ChatID:    evt.Info.Chat.String(),
+			Direction: "out",
+			Sender:    "bot",
+			MsgType:   "text",
+			Content:   errorMsg,
+			Status:    "sent",
+		})
 		return
 	}
 
@@ -635,11 +712,16 @@ func handleIncomingMessage(
 
 	// 4. Handle TTS if original message was audio
 	var replyAudio []byte
+	var rawWav []byte
 	if isAudio && replyText != "" {
 		trace.Logf(ctx, "Outbound: Synthesizing reply text to speech...")
 		ttsStart := time.Now()
-		var rawWav []byte
-		rawWav, ttsProvider, err = ttsOrch.Synthesize(ctx, replyText, "ar")
+		var ttsProvider string
+		// Drive synthesis with the chat agent's per-agent voice (language, voice
+		// name, gender, speed) instead of a hardcoded Arabic default.
+		voice := wfEngine.ResolveTTS(ctx, evt.Info.Chat.String())
+		ttsCtx := agentcfg.WithVoice(ctx, voice)
+		rawWav, ttsProvider, err = ttsOrch.Synthesize(ttsCtx, replyText, voice.LanguageCode)
 		ttsMs = int32(time.Since(ttsStart).Milliseconds())
 
 		if err != nil {
@@ -691,6 +773,93 @@ func handleIncomingMessage(
 			activityStatus = "failed"
 			activityError = &errStr
 		} else {
+			durationSeconds := len(replyAudio) / 4000
+			if durationSeconds == 0 {
+				durationSeconds = 1
+			}
+
+			// Generate the waveform reflecting the actual audio data from rawWav (WAV/MP3) bytes
+			wave := make([]byte, 64)
+			for i := 0; i < 64; i++ {
+				wave[i] = 2 // default minimum
+			}
+
+			pcmWav, err := audio.AnyToWav(rawWav)
+			if err == nil && len(pcmWav) > 44 {
+				pcmData := pcmWav[44:]
+				numSamples := len(pcmData) / 2
+				if numSamples >= 64 {
+					samplesPerBucket := numSamples / 64
+					peaks := make([]float64, 64)
+					maxPeak := 0.0
+
+					for bucket := 0; bucket < 64; bucket++ {
+						startSample := bucket * samplesPerBucket
+						endSample := startSample + samplesPerBucket
+						if bucket == 63 {
+							endSample = numSamples
+						}
+
+						sum := 0.0
+						count := 0
+						for s := startSample; s < endSample; s++ {
+							idx := s * 2
+							if idx+1 < len(pcmData) {
+								sampleVal := int16(pcmData[idx]) | (int16(pcmData[idx+1]) << 8)
+								absVal := float64(sampleVal)
+								if absVal < 0 {
+									absVal = -absVal
+								}
+								sum += absVal
+								count++
+							}
+						}
+
+						avg := sum
+						if count > 0 {
+							avg = sum / float64(count)
+						}
+						peaks[bucket] = avg
+						if avg > maxPeak {
+							maxPeak = avg
+						}
+					}
+
+					// Normalize and scale to a dynamic range (2-95) so it displays beautifully
+					if maxPeak > 0 {
+						for bucket := 0; bucket < 64; bucket++ {
+							scaled := (peaks[bucket] / maxPeak) * 95.0
+							val := int(scaled)
+							if val < 2 {
+								val = 2
+							}
+							if val > 127 {
+								val = 127
+							}
+							wave[bucket] = byte(val)
+						}
+					}
+				}
+			} else {
+				// Fallback: procedural envelope if decoding fails
+				for i := 0; i < 64; i++ {
+					envelope := float64(i)
+					if i > 32 {
+						envelope = float64(64 - i)
+					}
+					envelope = (envelope / 32.0) * 55.0
+					variation := float64((i*7)%15 - 7)
+					val := int(envelope + variation)
+					if val < 2 {
+						val = 2
+					}
+					if val > 99 {
+						val = 99
+					}
+					wave[i] = byte(val)
+				}
+			}
+
 			audioMsg := &proto.Message{
 				AudioMessage: &proto.AudioMessage{
 					URL:           googleProto.String(resp.URL),
@@ -701,6 +870,8 @@ func handleIncomingMessage(
 					FileLength:    googleProto.Uint64(uint64(len(replyAudio))),
 					FileSHA256:    resp.FileSHA256,
 					FileEncSHA256: resp.FileEncSHA256,
+					Seconds:       googleProto.Uint32(uint32(durationSeconds)),
+					Waveform:      wave,
 				},
 			}
 			_, err = client.SendMessage(context.Background(), evt.Info.Chat, audioMsg)

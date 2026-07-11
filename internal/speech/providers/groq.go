@@ -14,6 +14,7 @@ import (
 type GroqProvider struct {
 	apiKey string
 	model  string
+	client *http.Client
 }
 
 func NewGroqProvider(apiKey, model string) *GroqProvider {
@@ -23,6 +24,7 @@ func NewGroqProvider(apiKey, model string) *GroqProvider {
 	return &GroqProvider{
 		apiKey: apiKey,
 		model:  model,
+		client: &http.Client{Timeout: 30 * time.Second},
 	}
 }
 
@@ -71,8 +73,7 @@ func (p *GroqProvider) Transcribe(ctx context.Context, wavBytes []byte, language
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	req.Header.Set("Authorization", "Bearer "+p.apiKey)
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := p.client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("http request failed: %w", err)
 	}

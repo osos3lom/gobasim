@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sawt-go/internal/agentcfg"
 	"time"
 )
 
@@ -127,35 +128,54 @@ func (p *GoogleProvider) Transcribe(ctx context.Context, wavBytes []byte, langua
 	return responseStruct.Results[0].Alternatives[0].Transcript, nil
 }
 
-// Synthesize calls the Google Cloud Text-to-Speech REST API.
+// Synthesize calls the Google Cloud Text-to-Speech REST API. The per-agent voice
+// (language, voice name, gender, speed) is read from the request context when
+// present; otherwise it falls back to the language argument and Arabic defaults.
 func (p *GoogleProvider) Synthesize(ctx context.Context, text string, language string) ([]byte, error) {
 	if p.apiKey == "" {
 		return nil, fmt.Errorf("google api key is not set")
 	}
 
+	voice, _ := agentcfg.VoiceFromContext(ctx)
+	if voice.LanguageCode != "" {
+		language = voice.LanguageCode
+	}
 	if language == "" || language == "ar" {
 		language = "ar-XA" // Standard Arabic
 	}
 
 	url := fmt.Sprintf("%s?key=%s", p.ttsBaseURL, p.apiKey)
 
-	// We use standard wavenet or neural voices for high-quality Arabic pronunciation
-	voiceName := "ar-XA-Wavenet-A"
-	if language == "ar-XA" {
-		voiceName = "ar-XA-Wavenet-B" // Usually male/female alternatives
+	// Prefer the agent-configured voice; otherwise use a high-quality Arabic
+	// Wavenet default.
+	voiceName := voice.VoiceName
+	if voiceName == "" {
+		voiceName = "ar-XA-Wavenet-A"
+		if language == "ar-XA" {
+			voiceName = "ar-XA-Wavenet-B"
+		}
+	}
+
+	voiceParams := map[string]interface{}{
+		"languageCode": language,
+		"name":         voiceName,
+	}
+	if voice.Gender != "" {
+		voiceParams["ssmlGender"] = voice.Gender
+	}
+	audioConfig := map[string]interface{}{
+		"audioEncoding": "LINEAR16", // Output 16-bit WAV PCM
+	}
+	if voice.Speed > 0 {
+		audioConfig["speakingRate"] = voice.Speed
 	}
 
 	payload := map[string]interface{}{
 		"input": map[string]interface{}{
 			"text": text,
 		},
-		"voice": map[string]interface{}{
-			"languageCode": language,
-			"name":         voiceName,
-		},
-		"audioConfig": map[string]interface{}{
-			"audioEncoding": "LINEAR16", // Output 16-bit WAV PCM
-		},
+		"voice":       voiceParams,
+		"audioConfig": audioConfig,
 	}
 
 	jsonBytes, err := json.Marshal(payload)

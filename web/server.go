@@ -19,6 +19,7 @@ import (
 	"runtime"
 	"sawt-go/config"
 	"sawt-go/database"
+	"sawt-go/internal/agentcfg"
 	"sawt-go/internal/audio"
 	"sawt-go/internal/monitor"
 	"sawt-go/internal/ratelimit"
@@ -40,11 +41,12 @@ import (
 //go:embed templates/*
 var templatesFS embed.FS
 
-// staticFS holds embedded compiled assets (Tailwind CSS build output).
+// staticFS holds embedded compiled assets (Tailwind CSS build output) plus the
+// small CSP-clean helper script for the workflows list editors.
 // Regenerate web/static/app.css via `npm run build:css` after
 // editing web/static/src/input.css or template class names.
 //
-//go:embed static/app.css
+//go:embed static/app.css static/workflow.js
 var staticFS embed.FS
 
 type Server struct {
@@ -331,7 +333,7 @@ func peerIP(r *http.Request) string {
 }
 
 func (s *Server) handlePostLogin(w http.ResponseWriter, r *http.Request) {
-	if allowed, _ := s.loginLimiter.Allow(peerIP(r)); !allowed {
+	if allowed, _ := s.loginLimiter.Allow(clientIP(r)); !allowed {
 		s.renderError(w, http.StatusTooManyRequests, "Too many login attempts — try again in a few minutes.")
 		return
 	}
@@ -513,7 +515,7 @@ func (s *Server) handleGetWhatsAppPage(w http.ResponseWriter, r *http.Request) {
 	token := s.ensureCSRFToken(w, r)
 	chats, err := s.queries.ListWaChatsSummary(r.Context())
 	if err != nil {
-		chats = []database.WaChatSummary{}
+		chats = []database.ListWaChatsSummaryRow{}
 	}
 	s.renderWhatsAppCard(w, r, map[string]interface{}{
 		"Username":  r.Context().Value(UsernameContextKey),
@@ -705,7 +707,7 @@ const waMessagesThreadLimit = 50
 func (s *Server) handleGetWaChatsFragment(w http.ResponseWriter, r *http.Request) {
 	chats, err := s.queries.ListWaChatsSummary(r.Context())
 	if err != nil {
-		chats = []database.WaChatSummary{}
+		chats = []database.ListWaChatsSummaryRow{}
 	}
 	s.renderTemplate(w, "whatsapp.html", map[string]interface{}{
 		"Chats":       chats,
@@ -875,10 +877,37 @@ func (s *Server) handleGetWorkflowsPage(w http.ResponseWriter, r *http.Request) 
 // GET page load and the create-agent handler's validation/failure paths so
 // a failed create still shows the (unchanged) agent list plus the reason.
 // agentRow decorates an Agent with the derived "unpublished changes" flag
-// (published agents whose config was edited after the last publish, D4).
+// (published agents whose config was edited after the last publish, D4) and the
+// parsed four-block config the template renders as typed form fields. LLM/TTS/
+// SubAgents render as structured inputs; the skills and MCP-server lists are
+// handed to the client-side list editor as JSON (see web/static/workflow.js).
 type agentRow struct {
 	database.Agent
 	HasUnpublishedChanges bool
+	LLM                   agentcfg.LLM
+	TTS                   agentcfg.TTS
+	SubAgents             agentcfg.SubAgents
+	SkillsJSON            string
+	MCPJSON               string
+}
+
+// KnownDelegateAgents lists the intent specs a sub-agent delegation may target,
+// rendered as checkboxes in the capabilities block.
+var KnownDelegateAgents = []string{"operations", "accounting", "administration", "sales", "breeding", "client"}
+
+// DelegateChecked reports whether a delegate agent is in this row's allow-list,
+// so the template can pre-check its box.
+func (a agentRow) DelegateChecked(name string) bool {
+	return a.SubAgents.Allows(name) || contains(a.SubAgents.AllowedAgents, name)
+}
+
+func contains(xs []string, want string) bool {
+	for _, x := range xs {
+		if x == want {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) renderWorkflowsPage(w http.ResponseWriter, r *http.Request, errMsg string) {
@@ -891,16 +920,51 @@ func (s *Server) renderWorkflowsPage(w http.ResponseWriter, r *http.Request, err
 	for _, a := range agents {
 		unpublished := a.Status == "published" &&
 			(a.LastPublished == nil || a.LastEdited.After(*a.LastPublished))
-		rows = append(rows, agentRow{Agent: a, HasUnpublishedChanges: unpublished})
+		// Parse errors here are non-fatal for rendering: fall back to defaults so
+		// a legacy/placeholder blob still shows editable fields the operator can fix.
+		llm, err := agentcfg.ParseLLM(a.Llm)
+		if err != nil {
+			llm = agentcfg.DefaultLLM()
+		}
+		tts, err := agentcfg.ParseTTS(a.Tts)
+		if err != nil {
+			tts = agentcfg.DefaultTTS()
+		}
+		sub, err := agentcfg.ParseSubAgents(a.SubAgents)
+		if err != nil {
+			sub = agentcfg.DefaultSubAgents()
+		}
+		rows = append(rows, agentRow{
+			Agent:                 a,
+			HasUnpublishedChanges: unpublished,
+			LLM:                   llm,
+			TTS:                   tts,
+			SubAgents:             sub,
+			SkillsJSON:            jsonOrDefault(a.Skills, "[]"),
+			MCPJSON:               jsonOrDefault(a.McpServers, "[]"),
+		})
 	}
 
 	s.renderTemplate(w, "workflow.html", map[string]interface{}{
-		"Username":  r.Context().Value(UsernameContextKey),
-		"Agents":    rows,
-		"Page":      "workflows",
-		"CSRFToken": s.ensureCSRFToken(w, r),
-		"Error":     errMsg,
+		"Username":       r.Context().Value(UsernameContextKey),
+		"Agents":         rows,
+		"Page":           "workflows",
+		"CSRFToken":      s.ensureCSRFToken(w, r),
+		"Error":          errMsg,
+		"DelegateAgents": KnownDelegateAgents,
+		"HistoryDefault": agentcfg.DefaultHistory,
+		"HistoryMax":     agentcfg.MaxHistory,
+		"SubTokensMax":   agentcfg.MaxSubAgentTokens,
 	})
+}
+
+// jsonOrDefault returns raw JSON bytes as a string, substituting a fallback when
+// the column is empty, so the client editor always receives parseable JSON.
+func jsonOrDefault(raw []byte, fallback string) string {
+	if len(raw) == 0 {
+		return fallback
+	}
+	return string(raw)
 }
 
 // handlePostCreateWorkflow creates a new agent from just a name, leaving
@@ -929,15 +993,19 @@ func (s *Server) handlePostCreateWorkflow(w http.ResponseWriter, r *http.Request
 		Status:        "draft",
 		Template:      "Blank Template",
 		ModelType:     "asr-llm-tts",
-		Asr:           []byte(`{"vendor":"deepgram","model":"nova-3","language":"en"}`),
-		Llm:           []byte(`{"vendor":"openai","url":"https://api.openai.com/v1/chat/completions","model":"gpt-4o-mini"}`),
-		Tts:           []byte(`{"vendor":"minimax","model":"speech-2.8-turbo","voice":"Radiant Girl"}`),
+		// Seed with real, provider-aligned defaults (agentcfg) rather than the
+		// former placeholder blobs (minimax / "Radiant Girl") that matched no
+		// implemented provider.
+		Asr:           agentcfg.DefaultASR().Marshal(),
+		Llm:           agentcfg.DefaultLLM().Marshal(),
+		Tts:           agentcfg.DefaultTTS().Marshal(),
 		TurnDetection: true,
 		StartOfSpeech: true,
 		EndOfSpeech:   true,
-		MaxHistory:    10,
+		MaxHistory:    int32(agentcfg.DefaultHistory),
 		McpServers:    []byte(`[]`),
 		Skills:        []byte(`[]`),
+		SubAgents:     agentcfg.DefaultSubAgents().Marshal(),
 	})
 	if err != nil {
 		log.Printf("web: failed to create agent %q: %v", name, err)
@@ -961,58 +1029,162 @@ func validatePublishTransition(requestedStatus, systemPrompt string) string {
 	return ""
 }
 
-func (s *Server) handlePostUpdateWorkflow(w http.ResponseWriter, r *http.Request) {
-	agentID := r.FormValue("id")
-	name := r.FormValue("name")
-	prompt := r.FormValue("system_prompt")
-	greeting := r.FormValue("greeting_message")
-	failure := r.FormValue("failure_message")
-	requestedStatus := r.FormValue("status")
+// feedbackErr writes the red HTMX #feedback snippet with an escaped reason.
+func feedbackErr(w http.ResponseWriter, reason string) {
+	w.Write([]byte(fmt.Sprintf("<div class='bg-red-900 border border-red-500 text-red-200 px-4 py-3 rounded'>%s</div>", template.HTMLEscapeString(reason))))
+}
 
-	// Get current agent to preserve json parameters
+// formBool reads an HTML checkbox: present (any non-empty value) means checked.
+func formBool(r *http.Request, name string) bool {
+	return r.FormValue(name) != ""
+}
+
+func (s *Server) handlePostUpdateWorkflow(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		feedbackErr(w, "Malformed form submission.")
+		return
+	}
+	agentID := r.FormValue("id")
+
+	// Fetch the current row: ASR is not one of the four editable blocks, so it is
+	// preserved as-is, and the status default falls back to the stored value.
 	agent, err := s.queries.GetAgent(r.Context(), agentID)
 	if err != nil {
 		http.Error(w, "Agent not found", http.StatusNotFound)
 		return
 	}
 
-	// Status is optional for backward compatibility: an absent field keeps
-	// the current status. Anything other than draft/published is rejected.
-	switch requestedStatus {
-	case "":
-		requestedStatus = agent.Status
-	case "draft", "published":
-	default:
-		w.Write([]byte("<div class='bg-red-900 border border-red-500 text-red-200 px-4 py-3 rounded'>Invalid status value.</div>"))
+	arg, reason := s.buildUpdateParams(r, agent)
+	if reason != "" {
+		feedbackErr(w, reason)
 		return
 	}
 
-	if reason := validatePublishTransition(requestedStatus, prompt); reason != "" {
-		w.Write([]byte(fmt.Sprintf("<div class='bg-red-900 border border-red-500 text-red-200 px-4 py-3 rounded'>%s</div>", template.HTMLEscapeString(reason))))
-		return
-	}
-
-	arg := database.UpdateAgentWorkflowParams{
-		ID:              agentID,
-		Name:            name,
-		SystemPrompt:    prompt,
-		GreetingMessage: greeting,
-		FailureMessage:  failure,
-		Asr:             agent.Asr,
-		Llm:             agent.Llm,
-		Tts:             agent.Tts,
-		MaxHistory:      agent.MaxHistory,
-		Status:          requestedStatus,
-	}
-
-	_, err = s.queries.UpdateAgentWorkflow(r.Context(), arg)
-	if err != nil {
+	if _, err = s.queries.UpdateAgentWorkflow(r.Context(), arg); err != nil {
 		log.Printf("web: failed to update agent workflow %q: %v", agentID, err)
-		w.Write([]byte("<div class='bg-red-900 border border-red-500 text-red-200 px-4 py-3 rounded'>Failed to update the workflow. Please try again.</div>"))
+		feedbackErr(w, "Failed to update the workflow. Please try again.")
 		return
 	}
 
 	w.Write([]byte("<div class='bg-emerald-900 border border-emerald-500 text-emerald-200 px-4 py-3 rounded'>Workflow updated successfully!</div>"))
+}
+
+// buildUpdateParams parses and validates the four-block workflow form into a
+// full UpdateAgentWorkflowParams. It returns a human-readable reason (for the
+// #feedback banner) instead of an error when validation fails. Every editable
+// column is set explicitly — the UPDATE now writes the JSONB/boolean columns, so
+// omitting any would destructively overwrite it with a zero value.
+func (s *Server) buildUpdateParams(r *http.Request, agent database.Agent) (database.UpdateAgentWorkflowParams, string) {
+	prompt := r.FormValue("system_prompt")
+
+	// Name is editable but must not be blanked; fall back to the stored value.
+	name := strings.TrimSpace(r.FormValue("name"))
+	if name == "" {
+		name = agent.Name
+	}
+
+	// Status: absent keeps current; only draft/published are accepted.
+	status := r.FormValue("status")
+	switch status {
+	case "":
+		status = agent.Status
+	case "draft", "published":
+	default:
+		return database.UpdateAgentWorkflowParams{}, "Invalid status value."
+	}
+	if reason := validatePublishTransition(status, prompt); reason != "" {
+		return database.UpdateAgentWorkflowParams{}, reason
+	}
+
+	// Block 1 — LLM Brain & Telemetry.
+	llm := agentcfg.LLM{
+		Vendor:    r.FormValue("llm_vendor"),
+		URL:       r.FormValue("llm_url"),
+		APIKeyEnv: r.FormValue("llm_api_key_env"),
+		Model:     r.FormValue("llm_model"),
+	}
+	if err := llm.Validate(); err != nil {
+		return database.UpdateAgentWorkflowParams{}, err.Error()
+	}
+	maxHistory := agentcfg.ClampHistory(atoiDefault(r.FormValue("max_history"), agentcfg.DefaultHistory))
+
+	// Block 4 — Aegis Audio & Speech (TTS).
+	tts := agentcfg.TTS{
+		Vendor:       r.FormValue("tts_vendor"),
+		LanguageCode: r.FormValue("tts_language_code"),
+		VoiceName:    r.FormValue("tts_voice_name"),
+		Gender:       r.FormValue("tts_gender"),
+		Model:        r.FormValue("tts_model"),
+		Speed:        float32(atofDefault(r.FormValue("tts_speed"), 1.0)),
+	}
+	if err := tts.Validate(); err != nil {
+		return database.UpdateAgentWorkflowParams{}, err.Error()
+	}
+
+	// Block 3 — Capabilities. Skills and MCP servers arrive as JSON from the
+	// client list editor; sub-agents from discrete inputs. Private MCP hosts are
+	// allowed only outside production (SecureCookie is the production signal).
+	allowPrivate := !s.cfg.SecureCookie
+	mcpServers, err := agentcfg.ParseMCPServers([]byte(emptyToArray(r.FormValue("mcp_servers"))), allowPrivate)
+	if err != nil {
+		return database.UpdateAgentWorkflowParams{}, err.Error()
+	}
+	skills, err := agentcfg.ParseSkills([]byte(emptyToArray(r.FormValue("skills"))))
+	if err != nil {
+		return database.UpdateAgentWorkflowParams{}, err.Error()
+	}
+	sub := agentcfg.SubAgents{
+		Enabled:       formBool(r, "sub_agents_enabled"),
+		MaxTokens:     atoiDefault(r.FormValue("sub_agents_max_tokens"), 0),
+		AllowedAgents: r.Form["sub_agents_allowed"],
+	}
+	if err := sub.Validate(); err != nil {
+		return database.UpdateAgentWorkflowParams{}, err.Error()
+	}
+
+	return database.UpdateAgentWorkflowParams{
+		ID:                        r.FormValue("id"),
+		Name:                      name,
+		SystemPrompt:              prompt,
+		GreetingMessage:           r.FormValue("greeting_message"),
+		FailureMessage:            r.FormValue("failure_message"),
+		Asr:                       agent.Asr, // not an editable block; preserved
+		Llm:                       llm.Marshal(),
+		Tts:                       tts.Marshal(),
+		MaxHistory:                int32(maxHistory),
+		Status:                    status,
+		McpServers:                agentcfg.MarshalMCPServers(mcpServers),
+		Skills:                    agentcfg.MarshalSkills(skills),
+		SubAgents:                 sub.Marshal(),
+		TurnDetection:             formBool(r, "turn_detection"),
+		StartOfSpeech:             formBool(r, "start_of_speech"),
+		EndOfSpeech:               formBool(r, "end_of_speech"),
+		SelectiveAttentionLocking: formBool(r, "selective_attention_locking"),
+		FillerWords:               formBool(r, "filler_words"),
+	}, ""
+}
+
+// emptyToArray substitutes an empty JSON array for a blank field so the agentcfg
+// list parsers always receive valid JSON.
+func emptyToArray(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return "[]"
+	}
+	return s
+}
+
+func atoiDefault(s string, def int) int {
+	if v, err := strconv.Atoi(strings.TrimSpace(s)); err == nil {
+		return v
+	}
+	return def
+}
+
+func atofDefault(s string, def float64) float64 {
+	if v, err := strconv.ParseFloat(strings.TrimSpace(s), 64); err == nil {
+		return v
+	}
+	return def
 }
 
 func (s *Server) handleSSELogs(w http.ResponseWriter, r *http.Request) {

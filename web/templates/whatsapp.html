@@ -49,6 +49,51 @@
         {{template "wa-messages-panel" .}}
     </div>
 
+    <!-- JS Tab Switching Fallback/Enhancement -->
+    <script>
+    (function() {
+        const tabs = ["connection", "contacts", "messages"];
+        
+        function updateTabs() {
+            tabs.forEach(tab => {
+                const radio = document.getElementById(`wa-tab-${tab}`);
+                const panel = document.getElementById(`wa-panel-${tab}`);
+                if (radio && panel) {
+                    if (radio.checked) {
+                        panel.style.setProperty("display", "block", "important");
+                    } else {
+                        panel.style.setProperty("display", "none", "important");
+                    }
+                }
+            });
+        }
+
+        // Run on load and bind event listeners
+        document.addEventListener("DOMContentLoaded", () => {
+            tabs.forEach(tab => {
+                const radio = document.getElementById(`wa-tab-${tab}`);
+                if (radio) {
+                    radio.addEventListener("change", updateTabs);
+                }
+            });
+            updateTabs();
+        });
+
+        // Also run immediately since HTMX swaps might bypass DOMContentLoaded
+        setTimeout(updateTabs, 50);
+        // Bind to htmx events to re-apply/update if page is swapped
+        document.body.addEventListener('htmx:afterOnLoad', () => {
+            tabs.forEach(tab => {
+                const radio = document.getElementById(`wa-tab-${tab}`);
+                if (radio) {
+                    radio.removeEventListener("change", updateTabs);
+                    radio.addEventListener("change", updateTabs);
+                }
+            });
+            updateTabs();
+        });
+    })();
+    </script>
 </div>
 {{end}}
 
@@ -203,7 +248,7 @@
                 class="text-[10px] text-indigo-400 hover:text-indigo-300 font-semibold px-2 py-0.5 transition duration-200">
                 Edit
             </button>
-            <form hx-post="/dashboard/whatsapp/contacts/{{.ChatID}}/toggle" hx-target="#wa-contact-{{.ChatID}}" hx-swap="outerHTML">
+            <form hx-post="/dashboard/whatsapp/contacts/{{.ChatID}}/toggle" hx-target="closest .wa-contact-row" hx-swap="outerHTML">
                 <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
                 {{if .Enabled}}
                 <button type="submit" role="switch" aria-checked="true" hx-disabled-elt="this"
@@ -221,7 +266,7 @@
     </div>
 
     <!-- Inline agent-assignment editor, toggled by the "Edit" button above -->
-    <form hx-post="/dashboard/whatsapp/contacts/{{.ChatID}}/agent" hx-target="#wa-contact-{{.ChatID}}" hx-swap="outerHTML"
+    <form hx-post="/dashboard/whatsapp/contacts/{{.ChatID}}/agent" hx-target="closest .wa-contact-row" hx-swap="outerHTML"
           class="wa-edit-form hidden mt-3 pt-3 border-t border-indigo-950/30 space-y-3">
         <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
         <div>
@@ -296,12 +341,12 @@
         <h4 class="font-bold text-white text-sm">{{.ChatID}}</h4>
         <p class="text-[10px] text-gray-500">Showing messages logged since Sawt started running &mdash; not full WhatsApp history.</p>
     </div>
-    <div id="wa-message-list-{{.ChatID}}" class="flex-1 overflow-y-auto p-4 space-y-2" role="log" aria-live="polite">
+    <div id="wa-message-list" class="flex-1 overflow-y-auto p-4 space-y-2" role="log" aria-live="polite">
         {{range .Messages}}{{template "wa_message_bubble" .}}{{else}}
         <div class="text-center text-gray-400 text-sm py-8">No messages yet.</div>
         {{end}}
     </div>
-    <form hx-post="/dashboard/whatsapp/chats/{{.ChatID}}/send-text" hx-target="#wa-message-list-{{.ChatID}}" hx-swap="beforeend" hx-on::after-request="this.reset()"
+    <form hx-post="/dashboard/whatsapp/chats/{{.ChatID}}/send-text" hx-target="#wa-message-list" hx-swap="beforeend" hx-on::after-request="this.reset()"
           class="p-3 border-t border-indigo-950/50 shrink-0 flex gap-2">
         <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
         <input type="text" name="text" placeholder="Type a message..." required
@@ -310,7 +355,7 @@
             class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl transition duration-200">
             Send
         </button>
-        <button type="submit" hx-post="/dashboard/whatsapp/chats/{{.ChatID}}/send-voice" hx-target="#wa-message-list-{{.ChatID}}" hx-swap="beforeend" hx-disabled-elt="this"
+        <button type="submit" hx-post="/dashboard/whatsapp/chats/{{.ChatID}}/send-voice" hx-target="#wa-message-list" hx-swap="beforeend" hx-disabled-elt="this"
             class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-gray-200 text-xs font-semibold rounded-xl border border-indigo-950 transition duration-200">
             Send as Voice
         </button>

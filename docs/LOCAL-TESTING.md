@@ -69,7 +69,7 @@ clean). What that changes for local testing:
 go build ./... ; go vet ./... ; go test ./...
 ```
 
-141 test functions across 24 files, including the 7-scenario eval suite (`internal/workflow/eval_test.go`, fakes
+149 test functions across 24 files, including the 7-scenario eval suite (`internal/workflow/eval_test.go`, fakes
 — no live services), the confirmation-overwrite regression, and full fake-based unit coverage for
 the AI speech providers (`internal/speech/...` — see §3.5). This is the regression net.
 

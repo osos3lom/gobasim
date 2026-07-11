@@ -124,7 +124,7 @@ any tool runs (an identity cache/TTL is planned on our side to reduce this load)
   "identity": {
     "uid": "user_abc123",
     "phone": "9665XXXXXXXX",
-    "role": "stable_manager",
+    "role": "manager",
     "displayName": "Ali Al-...",
     "orgIds": ["org_equine_01"]
   }

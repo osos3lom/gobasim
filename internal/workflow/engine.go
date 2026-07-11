@@ -8,8 +8,10 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"sawt-go/config"
 	"sawt-go/database"
+	"sawt-go/internal/agentcfg"
 	"sawt-go/internal/erp"
 	"sawt-go/internal/trace"
 	"strings"
@@ -141,20 +143,104 @@ func NewWorkflowEngine(cfg *config.Config, erpClient *erp.Client, queries databa
 	} else {
 		log.Println("Workflow: OpenAI-compatible fallback LLM provider skipped (OPENAI_API_KEY not set).")
 	}
+	if cfg.GroqAPIKey != "" {
+		e.providers = append(e.providers, llmProvider{
+			Name: "groq", BaseURL: "https://api.groq.com/openai/v1", APIKey: cfg.GroqAPIKey, Model: "llama-3.3-70b-versatile",
+		})
+		log.Println("Workflow: Groq LLM provider registered (Rank 3).")
+	} else {
+		log.Println("Workflow: Groq LLM provider skipped (GROQ_API_KEY not set).")
+	}
 
 	e.complete = e.chatCompletions
 	return e
 }
 
-// chatCompletions cascades through the registered LLM providers, returning the
-// first successful completion.
+// providersCtxKey carries the per-request LLM provider chain (an agent's own
+// configured provider ahead of the global env cascade) so chatCompletions can
+// prefer it without changing the completionFn seam that tests inject.
+type providersCtxKey struct{}
+
+func providersFromCtx(ctx context.Context) []llmProvider {
+	p, _ := ctx.Value(providersCtxKey{}).([]llmProvider)
+	return p
+}
+
+// resolveAgent returns the agent bound to a chat using the same precedence as
+// resolveSystemPrompt (contact's assigned agent, else the "default" agent). It
+// is nil-safe: an unconfigured querier (unit tests) yields no agent.
+func (e *WorkflowEngine) resolveAgent(ctx context.Context, chatID string) (database.Agent, bool) {
+	if e.queries == nil || chatID == "" {
+		return database.Agent{}, false
+	}
+	if contact, err := e.queries.GetWaContact(ctx, chatID); err == nil &&
+		contact.AgentID != nil && *contact.AgentID != "" {
+		if agent, err := e.queries.GetAgent(ctx, *contact.AgentID); err == nil {
+			return agent, true
+		}
+	}
+	if agent, err := e.queries.GetAgent(ctx, "default"); err == nil {
+		return agent, true
+	}
+	return database.Agent{}, false
+}
+
+// ResolveTTS returns the TTS voice config for a chat's agent, falling back to
+// agentcfg defaults when no agent (or a malformed config) is found. The outbound
+// voice-note pipeline uses this to drive per-agent speech synthesis.
+func (e *WorkflowEngine) ResolveTTS(ctx context.Context, chatID string) agentcfg.TTS {
+	agent, ok := e.resolveAgent(ctx, chatID)
+	if !ok {
+		return agentcfg.DefaultTTS()
+	}
+	tts, err := agentcfg.ParseTTS(agent.Tts)
+	if err != nil {
+		return agentcfg.DefaultTTS()
+	}
+	return tts
+}
+
+// withAgentProviders resolves the chat's agent LLM config and, when it is
+// complete (env key present, model + URL set), returns a context whose provider
+// chain puts that agent-specific provider first and keeps the global env cascade
+// as fallback. An incomplete/absent config leaves the context untouched so the
+// engine keeps using the env cascade exactly as before.
+func (e *WorkflowEngine) withAgentProviders(ctx context.Context, chatID string) context.Context {
+	agent, ok := e.resolveAgent(ctx, chatID)
+	if !ok {
+		return ctx
+	}
+	cfg, err := agentcfg.ParseLLM(agent.Llm)
+	if err != nil {
+		return ctx
+	}
+	key := os.Getenv(cfg.APIKeyEnv)
+	if key == "" || cfg.Model == "" || cfg.URL == "" {
+		return ctx
+	}
+	primary := llmProvider{
+		Name:    "agent:" + cfg.Vendor,
+		BaseURL: strings.TrimRight(cfg.URL, "/"),
+		APIKey:  key,
+		Model:   cfg.Model,
+	}
+	return context.WithValue(ctx, providersCtxKey{}, append([]llmProvider{primary}, e.providers...))
+}
+
+// chatCompletions cascades through the request's LLM provider chain (an agent's
+// own provider first when configured, otherwise the global env cascade),
+// returning the first successful completion.
 func (e *WorkflowEngine) chatCompletions(ctx context.Context, messages []Message, tools []ToolDefinition, temp float32, maxTokens int) (*Message, error) {
-	if len(e.providers) == 0 {
+	providers := providersFromCtx(ctx)
+	if len(providers) == 0 {
+		providers = e.providers
+	}
+	if len(providers) == 0 {
 		return nil, fmt.Errorf("no LLM providers configured (set NIM_API_KEY and/or OPENAI_API_KEY)")
 	}
 
 	var lastErr error
-	for _, p := range e.providers {
+	for _, p := range providers {
 		msg, err := e.callProvider(ctx, p, messages, tools, temp, maxTokens)
 		if err == nil {
 			return msg, nil
@@ -259,8 +345,8 @@ func (e *WorkflowEngine) ClassifyIntent(ctx context.Context, state *State) error
 
 	msg, err := e.complete(ctx, messages, nil, 0.0, 10)
 	if err != nil {
-		trace.Logf(ctx, "[workflow] ClassifyIntent failed, defaulting to operations: %v", err)
-		state.Intent = "operations"
+		trace.Logf(ctx, "[workflow] ClassifyIntent failed, defaulting to other: %v", err)
+		state.Intent = "other"
 		return nil
 	}
 
@@ -274,7 +360,7 @@ func (e *WorkflowEngine) ClassifyIntent(ctx context.Context, state *State) error
 	case "operations", "accounting", "administration", "sales", "breeding", "other":
 		state.Intent = intent
 	default:
-		state.Intent = "operations" // Safe default
+		state.Intent = "other" // Fallback to general chat, not tool-calling
 	}
 
 	trace.Logf(ctx, "[workflow] Classified intent: '%s'", state.Intent)
@@ -282,6 +368,11 @@ func (e *WorkflowEngine) ClassifyIntent(ctx context.Context, state *State) error
 }
 
 func (e *WorkflowEngine) Execute(ctx context.Context, state *State) error {
+	// Bind this request's LLM provider chain from the chat's agent config (falls
+	// back to the env cascade when the agent has no complete LLM config). Every
+	// downstream e.complete call inherits it via ctx.
+	ctx = e.withAgentProviders(ctx, state.ChatID)
+
 	// 0. A chat waiting on a yes/no consumes this message first.
 	if handled, err := e.resolvePendingConfirmation(ctx, state); err != nil {
 		trace.Logf(ctx, "[workflow] Pending-confirmation resolution failed: %v", err)
@@ -380,15 +471,30 @@ func (e *WorkflowEngine) executeToolLoop(ctx context.Context, state *State, spec
 			allowedTools = append(allowedTools, t)
 		}
 	}
+	// Connect the agent's enabled MCP servers and expose their tools alongside the
+	// native ERP tools. Best-effort: unreachable servers are skipped, not fatal.
+	bundle := e.connectMCP(ctx, state.ChatID)
+
+	// Per-agent capabilities (skills manifest + sub-agent delegation) come from
+	// the resolved agent row. An absent agent yields inert bundles.
+	agentRow, _ := e.resolveAgent(ctx, state.ChatID)
+	skills := e.buildSkills(agentRow)
+	deleg := e.buildDelegate(agentRow)
+
 	var tools []ToolDefinition
 	if len(allowedTools) > 0 {
 		tools = allowedTools
 	}
+	tools = append(tools, bundle.tools...)
+	tools = append(tools, skills.tools...)
+	tools = append(tools, deleg.tools...)
 
 	systemPrompt := e.resolveSystemPrompt(ctx, state.ChatID, spec.DefaultPrompt)
 	if state.Summary != "" {
 		systemPrompt += "\n\nSummary of the conversation so far:\n" + state.Summary
 	}
+	systemPrompt += bundle.resources
+	systemPrompt += skills.manifest
 
 	// state.Messages is already bounded by the memory subsystem's per-agent
 	// max_history (LoadConversation) — no second, hardcoded truncation here.
@@ -420,19 +526,41 @@ func (e *WorkflowEngine) executeToolLoop(ctx context.Context, state *State, spec
 				args = make(map[string]interface{})
 			}
 
-			// Risky (medium/high) tools never execute directly: park the call
-			// and ask the user to confirm; the next message resolves it.
-			if riskOf(call.Function.Name) != "low" && e.queries != nil {
-				if err := e.requestConfirmation(ctx, state, call.Function.Name, args); err != nil {
-					return fmt.Errorf("failed to request confirmation: %w", err)
-				}
-				return nil
-			}
+			name := call.Function.Name
 
-			// Call ERP gateway tool
-			toolRes, err := e.erpClient.CallTool(ctx, call.Function.Name, orgID, state.ActorIdentity.UID, args)
-			if err != nil {
-				toolRes = map[string]interface{}{"ok": false, "error": err.Error()}
+			// Synthetic engine tools (skill disclosure, sub-agent delegation) run
+			// in-process, have no side effects on ERP/MCP, and so bypass the
+			// confirmation gate.
+			var toolRes map[string]interface{}
+			switch {
+			case name == loadSkillTool:
+				toolRes = skills.load(str(args["skill"]))
+			case name == delegateTool && deleg.active:
+				toolRes = e.runDelegate(ctx, deleg.sub, str(args["agent"]), str(args["task"]))
+			default:
+				// Risk gate: MCP tools carry their own read-only hint (write-capable
+				// ones default to medium), ERP tools use the static risk table.
+				// Anything above "low" parks for confirmation instead of executing.
+				risk := riskOf(name)
+				if r, ok := bundle.risk(name); ok {
+					risk = r
+				}
+				if risk != "low" && e.queries != nil {
+					if err := e.requestConfirmation(ctx, state, name, args); err != nil {
+						return fmt.Errorf("failed to request confirmation: %w", err)
+					}
+					return nil
+				}
+
+				// Route to the owning executor: MCP-served tools to their server,
+				// everything else to the ERP gateway.
+				if bundle.owns(name) {
+					toolRes = callMCPTool(ctx, bundle.dispatch[name], name, args)
+				} else if res, err := e.erpClient.CallTool(ctx, name, orgID, state.ActorIdentity.UID, args); err != nil {
+					toolRes = map[string]interface{}{"ok": false, "error": err.Error()}
+				} else {
+					toolRes = res
+				}
 			}
 
 			state.ToolResults = append(state.ToolResults, map[string]interface{}{

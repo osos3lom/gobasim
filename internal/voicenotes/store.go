@@ -255,7 +255,7 @@ func (s *Store) markFailed(ctx context.Context, row database.WaVoiceNote, reason
 	}
 	err := s.db.MarkWaVoiceNoteFailed(ctx, database.MarkWaVoiceNoteFailedParams{
 		ID:            row.ID,
-		LastError:     reason,
+		LastError:     &reason,
 		NextAttemptAt: time.Now().Add(backoff(row.Attempts + 1)),
 		MaxAttempts:   maxTries,
 	})

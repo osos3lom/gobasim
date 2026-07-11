@@ -51,25 +51,29 @@ ORDER BY name;
 
 -- name: CreateAgent :one
 INSERT INTO agents (
-    id, name, project_id, hosting_region, status, last_edited, 
-    last_published, template, system_prompt, greeting_message, 
-    failure_message, model_type, asr, llm, tts, turn_detection, 
-    start_of_speech, end_of_speech, selective_attention_locking, 
-    filler_words, max_history, mcp_servers, skills
+    id, name, project_id, hosting_region, status, last_edited,
+    last_published, template, system_prompt, greeting_message,
+    failure_message, model_type, asr, llm, tts, turn_detection,
+    start_of_speech, end_of_speech, selective_attention_locking,
+    filler_words, max_history, mcp_servers, skills, sub_agents
 ) VALUES (
-    $1, $2, $3, $4, $5, NOW(), 
-    $6, $7, $8, $9, 
-    $10, $11, $12, $13, $14, $15, 
-    $16, $17, $18, 
-    $19, $20, $21, $22
+    $1, $2, $3, $4, $5, NOW(),
+    $6, $7, $8, $9,
+    $10, $11, $12, $13, $14, $15,
+    $16, $17, $18,
+    $19, $20, $21, $22, $23
 ) RETURNING *;
 
 -- name: UpdateAgentWorkflow :one
 -- last_published is stamped only on the draft->published transition (D4);
--- the CASE reads the pre-update status, per UPDATE..SET semantics.
+-- the CASE reads the pre-update status, per UPDATE..SET semantics. The panel
+-- now edits the full four-block config, so every operator-editable column is set.
 UPDATE agents
 SET name = $2, system_prompt = $3, greeting_message = $4, failure_message = $5,
     asr = $6, llm = $7, tts = $8, max_history = $9,
+    mcp_servers = $11, skills = $12, sub_agents = $13,
+    turn_detection = $14, start_of_speech = $15, end_of_speech = $16,
+    selective_attention_locking = $17, filler_words = $18,
     last_published = CASE WHEN $10::text = 'published' AND status <> 'published' THEN NOW() ELSE last_published END,
     status = $10, last_edited = NOW()
 WHERE id = $1
@@ -118,8 +122,8 @@ VALUES ($1, $2, $3, $4, $5, $6, $7);
 
 -- name: ListWaMessagesByChat :many
 SELECT * FROM wa_messages
-WHERE chat_id = $1 AND ($2::bigint = 0 OR seq < $2)
-ORDER BY seq DESC LIMIT $3;
+WHERE chat_id = sqlc.arg(chat_id) AND (sqlc.arg(before_seq)::bigint = 0 OR seq < sqlc.arg(before_seq)::bigint)
+ORDER BY seq DESC LIMIT sqlc.arg('limit')::int;
 
 -- name: ListWaChatsSummary :many
 SELECT * FROM (
@@ -145,9 +149,9 @@ RETURNING id, chat_id, role, content, ts;
 
 -- name: ListConversationTurnsAfter :many
 SELECT id, chat_id, role, content, ts FROM conversation_turns
-WHERE chat_id = $1 AND id > $2
+WHERE chat_id = sqlc.arg(chat_id) AND id > sqlc.arg(after_id)::bigint
 ORDER BY id ASC
-LIMIT $3;
+LIMIT sqlc.arg('limit')::int;
 
 -- name: GetConversationState :one
 SELECT chat_id, summary, summarized_through, updated_at FROM conversation_state
@@ -169,8 +173,7 @@ SET tool_id = EXCLUDED.tool_id, args = EXCLUDED.args, org_id = EXCLUDED.org_id,
     created_at = NOW(), expires_at = EXCLUDED.expires_at;
 
 -- name: GetPendingConfirmation :one
-SELECT chat_id, tool_id, args, org_id, acting_user_uid, description, created_at, expires_at
-FROM pending_confirmations
+SELECT * FROM pending_confirmations
 WHERE chat_id = $1;
 
 -- ClaimPendingConfirmation atomically transitions a chat's pending row to
@@ -181,10 +184,13 @@ WHERE chat_id = $1;
 UPDATE pending_confirmations
 SET status = 'executing', claimed_at = NOW()
 WHERE chat_id = $1 AND status = 'pending'
-RETURNING chat_id, tool_id, args, org_id, acting_user_uid, description, created_at, expires_at;
+RETURNING *;
 
 -- name: DeletePendingConfirmation :exec
 DELETE FROM pending_confirmations WHERE chat_id = $1;
+
+-- name: PurgeExpiredConfirmations :exec
+DELETE FROM pending_confirmations WHERE expires_at < $1;
 
 -- name: PurgeSttHistoryBefore :exec
 DELETE FROM stt_history WHERE ts < $1;
@@ -222,7 +228,7 @@ UPDATE wa_voice_notes
 SET attempts = attempts + 1,
     last_error = $2,
     next_attempt_at = $3,
-    status = CASE WHEN attempts + 1 >= $4 THEN 'failed' ELSE 'pending' END
+    status = CASE WHEN attempts + 1 >= sqlc.arg(max_attempts) THEN 'failed' ELSE 'pending' END
 WHERE id = $1;
 
 -- name: ListPendingWaVoiceNotes :many

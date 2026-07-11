@@ -43,8 +43,8 @@ func TestClassifyIntentCleansLLMOutput(t *testing.T) {
 		{"ACCOUNTING", "accounting"},
 		{"administration!", "administration"},
 		{"other", "other"},
-		{"a whole sentence instead of one word", "operations"}, // safe default
-		{"", "operations"},                                     // safe default
+		{"a whole sentence instead of one word", "other"}, // safe default
+		{"", "other"},                                     // safe default
 	}
 
 	for _, tc := range cases {
@@ -61,7 +61,7 @@ func TestClassifyIntentCleansLLMOutput(t *testing.T) {
 	}
 }
 
-func TestClassifyIntentDefaultsToOperationsOnLLMError(t *testing.T) {
+func TestClassifyIntentDefaultsToOtherOnLLMError(t *testing.T) {
 	e := newTestEngine(func(ctx context.Context, m []Message, tools []ToolDefinition, temp float32, maxTokens int) (*Message, error) {
 		return nil, fmt.Errorf("llm down")
 	})
@@ -69,8 +69,8 @@ func TestClassifyIntentDefaultsToOperationsOnLLMError(t *testing.T) {
 	if err := e.ClassifyIntent(context.Background(), state); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if state.Intent != "operations" {
-		t.Fatalf("expected fallback intent 'operations', got %q", state.Intent)
+	if state.Intent != "other" {
+		t.Fatalf("expected fallback intent 'other', got %q", state.Intent)
 	}
 }
 
