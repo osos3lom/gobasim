@@ -11,12 +11,45 @@ import (
 	"time"
 )
 
+const (
+	defaultGoogleSTTBaseURL = "https://speech.googleapis.com/v1/speech:recognize"
+	defaultGoogleTTSBaseURL = "https://texttospeech.googleapis.com/v1/text:synthesize"
+)
+
 type GoogleProvider struct {
-	apiKey string
+	apiKey     string
+	httpClient *http.Client
+	sttBaseURL string
+	ttsBaseURL string
 }
 
-func NewGoogleProvider(apiKey string) *GoogleProvider {
-	return &GoogleProvider{apiKey: apiKey}
+// GoogleOption configures a GoogleProvider. Used in tests to inject a fake
+// HTTP client and base URLs so no real network call is made.
+type GoogleOption func(*GoogleProvider)
+
+func WithGoogleHTTPClient(c *http.Client) GoogleOption {
+	return func(p *GoogleProvider) { p.httpClient = c }
+}
+
+func WithGoogleSTTBaseURL(url string) GoogleOption {
+	return func(p *GoogleProvider) { p.sttBaseURL = url }
+}
+
+func WithGoogleTTSBaseURL(url string) GoogleOption {
+	return func(p *GoogleProvider) { p.ttsBaseURL = url }
+}
+
+func NewGoogleProvider(apiKey string, opts ...GoogleOption) *GoogleProvider {
+	p := &GoogleProvider{
+		apiKey:     apiKey,
+		httpClient: &http.Client{Timeout: 30 * time.Second},
+		sttBaseURL: defaultGoogleSTTBaseURL,
+		ttsBaseURL: defaultGoogleTTSBaseURL,
+	}
+	for _, opt := range opts {
+		opt(p)
+	}
+	return p
 }
 
 func (p *GoogleProvider) Name() string {
@@ -33,7 +66,7 @@ func (p *GoogleProvider) Transcribe(ctx context.Context, wavBytes []byte, langua
 		language = "ar-SA" // Default/normalize to Arabic (Saudi Arabia)
 	}
 
-	url := fmt.Sprintf("https://speech.googleapis.com/v1/speech:recognize?key=%s", p.apiKey)
+	url := fmt.Sprintf("%s?key=%s", p.sttBaseURL, p.apiKey)
 
 	// Base64 encode wav bytes
 	audioContent := base64.StdEncoding.EncodeToString(wavBytes)
@@ -60,8 +93,7 @@ func (p *GoogleProvider) Transcribe(ctx context.Context, wavBytes []byte, langua
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := p.httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("http request failed: %w", err)
 	}
@@ -105,7 +137,7 @@ func (p *GoogleProvider) Synthesize(ctx context.Context, text string, language s
 		language = "ar-XA" // Standard Arabic
 	}
 
-	url := fmt.Sprintf("https://texttospeech.googleapis.com/v1/text:synthesize?key=%s", p.apiKey)
+	url := fmt.Sprintf("%s?key=%s", p.ttsBaseURL, p.apiKey)
 
 	// We use standard wavenet or neural voices for high-quality Arabic pronunciation
 	voiceName := "ar-XA-Wavenet-A"
@@ -137,8 +169,7 @@ func (p *GoogleProvider) Synthesize(ctx context.Context, text string, language s
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := p.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("http request failed: %w", err)
 	}

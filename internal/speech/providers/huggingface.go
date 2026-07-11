@@ -12,12 +12,45 @@ import (
 	"time"
 )
 
+const (
+	defaultHFSTTURL = "https://api-inference.huggingface.co/models/openai/whisper-large-v3"
+	defaultHFTTSURL = "https://facebook-multimodal-mms.hf.space/api/predict"
+)
+
 type HuggingFaceProvider struct {
-	apiKey string
+	apiKey     string
+	httpClient *http.Client
+	sttURL     string
+	ttsURL     string
 }
 
-func NewHuggingFaceProvider(apiKey string) *HuggingFaceProvider {
-	return &HuggingFaceProvider{apiKey: apiKey}
+// HFOption configures a HuggingFaceProvider. Used in tests to inject a fake
+// HTTP client and URLs so no real network call is made.
+type HFOption func(*HuggingFaceProvider)
+
+func WithHFHTTPClient(c *http.Client) HFOption {
+	return func(p *HuggingFaceProvider) { p.httpClient = c }
+}
+
+func WithHFSTTURL(url string) HFOption {
+	return func(p *HuggingFaceProvider) { p.sttURL = url }
+}
+
+func WithHFTTSURL(url string) HFOption {
+	return func(p *HuggingFaceProvider) { p.ttsURL = url }
+}
+
+func NewHuggingFaceProvider(apiKey string, opts ...HFOption) *HuggingFaceProvider {
+	p := &HuggingFaceProvider{
+		apiKey:     apiKey,
+		httpClient: &http.Client{Timeout: 45 * time.Second},
+		sttURL:     defaultHFSTTURL,
+		ttsURL:     defaultHFTTSURL,
+	}
+	for _, opt := range opts {
+		opt(p)
+	}
+	return p
 }
 
 func (p *HuggingFaceProvider) Name() string {
@@ -30,8 +63,7 @@ func (p *HuggingFaceProvider) Transcribe(ctx context.Context, wavBytes []byte, l
 		return "", fmt.Errorf("huggingface api key is not set")
 	}
 
-	url := "https://api-inference.huggingface.co/models/openai/whisper-large-v3"
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(wavBytes))
+	req, err := http.NewRequestWithContext(ctx, "POST", p.sttURL, bytes.NewReader(wavBytes))
 	if err != nil {
 		return "", fmt.Errorf("failed to create http request: %w", err)
 	}
@@ -39,8 +71,7 @@ func (p *HuggingFaceProvider) Transcribe(ctx context.Context, wavBytes []byte, l
 	req.Header.Set("Authorization", "Bearer "+p.apiKey)
 	req.Header.Set("Content-Type", "audio/wav")
 
-	client := &http.Client{Timeout: 45 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := p.httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("http request failed: %w", err)
 	}
@@ -67,11 +98,6 @@ func (p *HuggingFaceProvider) Transcribe(ctx context.Context, wavBytes []byte, l
 
 // Synthesize uses a Gradio Hugging Face Space running facebook/mms-tts-ara.
 func (p *HuggingFaceProvider) Synthesize(ctx context.Context, text string, language string) ([]byte, error) {
-	// Call the Gradio API for facebook/mms-tts-ara.
-	// Space endpoint example: https://facebook-mms.hf.space/api/predict or similar public spaces.
-	// Defaulting to a standard prediction endpoint layout.
-	url := "https://facebook-multimodal-mms.hf.space/api/predict"
-
 	// Gradio input format for MMS: [text, model/language]
 	payload := map[string]interface{}{
 		"data": []interface{}{
@@ -85,7 +111,7 @@ func (p *HuggingFaceProvider) Synthesize(ctx context.Context, text string, langu
 		return nil, fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(jsonBytes))
+	req, err := http.NewRequestWithContext(ctx, "POST", p.ttsURL, bytes.NewReader(jsonBytes))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create http request: %w", err)
 	}
@@ -95,8 +121,7 @@ func (p *HuggingFaceProvider) Synthesize(ctx context.Context, text string, langu
 		req.Header.Set("Authorization", "Bearer "+p.apiKey)
 	}
 
-	client := &http.Client{Timeout: 45 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := p.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("http request failed: %w", err)
 	}

@@ -229,6 +229,8 @@ Legend: **R** = required, **P** = required for that feature path, **○** = opti
 | `ADMIN_PASSWORD` | ○ | generated | Seed password. If omitted, a random one is generated and **printed once** to the log. **Secret.** |
 | `ALLOW_MISSING_FFMPEG` | ○ | `false` | `true` lets the app boot without ffmpeg (voice notes disabled). |
 | `RETENTION_DAYS` | ○ | `90` | Daily purge/redaction of PII (transcripts, conversation turns, voice-note rows). `0` disables. |
+| `MAX_INFLIGHT` | ○ | `32` | Max concurrent inbound message handlers (semaphore; guarded to ≥1). |
+| `LOG_FORMAT` | ○ | `text` | `json` emits structured `log/slog` lines (with `trace_id`) for Cloud Logging; default is human-readable text. |
 | `NIM_API_KEY` | P | — | Primary LLM (NVIDIA NIM, OpenAI-compatible). **Secret.** |
 | `NIM_BASE_URL` | ○ | `https://integrate.api.nvidia.com/v1` | Primary LLM endpoint. |
 | `NIM_MODEL` | ○ | `meta/llama-3.3-70b-instruct` | Primary LLM model id. |
@@ -831,11 +833,12 @@ Each item notes what the code **already does** vs. what you must **add**.
   per-message worker in `handleIncomingMessage` has its own `defer recover()`
   that reports the panic and sends the user a friendly error instead of crashing
   the daemon.
-- **Add (recommended):** the HTTP server currently is **not** gracefully shut
-  down on `SIGTERM` (it disconnects WhatsApp and exits). For zero dropped
-  in-flight dashboard requests during a restart, wrap the server in
-  `http.Server.Shutdown(ctx)` on signal. Low-risk, but worth doing before heavy
-  operator use.
+- **Also already:** on `SIGTERM` the HTTP server is gracefully drained
+  (`http.Server.Shutdown`, 5 s bound, force-`Close` fallback) **before** WhatsApp
+  disconnects, and in-flight message handlers are drained (`inflightWG`, 25 s
+  bound). The server sets `ReadHeaderTimeout`/`ReadTimeout`/`IdleTimeout` (Slowloris
+  guard; `WriteTimeout` is left 0 so the `/api/logs` SSE stream stays open). Inbound
+  handling is bounded by `MAX_INFLIGHT` (default 32) with a per-message 120 s deadline.
 
 ---
 
@@ -871,8 +874,10 @@ Each item notes what the code **already does** vs. what you must **add**.
 
 ## 16. Health & Monitoring
 
-- **Liveness:** any HTTP `200`/`3xx` from `/login` means the web layer is up.
-  Point a GCP Uptime Check or `curl` at `https://sawt.example.com/login`.
+- **Liveness / readiness:** the app exposes three **unauthenticated** endpoints — `GET /healthz`
+  (liveness, `{"status":"ok"}`), `GET /readyz` (readiness — DB ping + WhatsApp state; `503` when the
+  DB is down), and `GET /metrics` (JSON uptime / goroutines / WhatsApp state / voice-note counters).
+  Point a GCP Uptime Check at `https://sawt.example.com/healthz` (or `/readyz` to gate on the DB).
 - **WhatsApp link state:** the dashboard home shows connection status and uptime;
   a debounced banner warns only after a **sustained** (>15 s) disconnect, so brief
   reconnect blips don't cry wolf.
@@ -982,7 +987,7 @@ Mapping of this guide to the deployment/development requirements:
 
 > **Stated assumptions where functionality is absent (not invented):** the app
 > has no in-process TLS (terminate at a proxy), no HSTS header (set it at the
-> proxy), no graceful `http.Server.Shutdown` on `SIGTERM` (recommended
-> addition), and no in-dashboard password-change flow (rotate via
-> `ADMIN_PASSWORD` + re-seed). These are documented as recommendations, not
-> assumed-existing features.
+> proxy), and no in-dashboard password-change flow (rotate via `ADMIN_PASSWORD` +
+> re-seed). These are documented as recommendations, not assumed-existing
+> features. (Graceful `http.Server.Shutdown` on `SIGTERM`, server timeouts, and
+> `/healthz`·`/readyz`·`/metrics` **are** implemented — see §14.10 and §16.)

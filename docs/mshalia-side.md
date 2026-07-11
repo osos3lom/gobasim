@@ -50,6 +50,15 @@ POST {MSHALIA_API_URL}/api/agent/v1/tools/{toolId}
 | `Content-Type` | `application/json` |
 | `x-swa-timestamp` | Unix time in **milliseconds** (string), e.g. `1751760000000` |
 | `x-swa-signature` | `HMAC-SHA256( AGENT_GATEWAY_SECRET, "{timestamp}.{rawBody}" )`, lowercase hex |
+| `x-swa-idempotency-key` | SHA-256 of the exact request body, hex. **Stable across our retries** (we re-sign each attempt with a fresh timestamp but keep this key). |
+| `x-swa-trace-id` | Correlation id (= the WhatsApp message id) for cross-system tracing. Log it. |
+
+> **Idempotency is a hard requirement, not a hint.** Our client retries transport errors and
+> `429`/`5xx` with jittered exponential backoff (~200 ms → 3 s, up to 3 attempts). For financial
+> writes (`record_expense`, `record_payment`) this is only safe if **you dedup on
+> `x-swa-idempotency-key`** — persist it and make a retried call with the same key a no-op that
+> returns the original result. (The per-tool `idempotencyKey` in `args`, §4.2, is a second,
+> arg-level guard; honor both.)
 
 **Signature construction (must match exactly):**
 

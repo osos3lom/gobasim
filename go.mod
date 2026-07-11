@@ -3,8 +3,11 @@ module sawt-go
 go 1.25.8
 
 require (
+	cloud.google.com/go/speech v1.35.0
 	cloud.google.com/go/storage v1.63.0
+	cloud.google.com/go/texttospeech v1.21.0
 	github.com/go-chi/chi/v5 v5.0.12
+	github.com/googleapis/gax-go/v2 v2.22.0
 	github.com/jackc/pgx/v5 v5.5.5
 	github.com/mdp/qrterminal/v3 v3.2.0
 	go.mau.fi/whatsmeow v0.0.0-20260630180629-b572e5bcb92b
@@ -20,6 +23,7 @@ require (
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	cloud.google.com/go/iam v1.11.0 // indirect
+	cloud.google.com/go/longrunning v1.0.0 // indirect
 	cloud.google.com/go/monitoring v1.29.0 // indirect
 	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.31.0 // indirect
@@ -39,7 +43,6 @@ require (
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.16 // indirect
-	github.com/googleapis/gax-go/v2 v2.22.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20221227161230-091c0ba34f0a // indirect
 	github.com/jackc/puddle/v2 v2.2.1 // indirect

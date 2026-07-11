@@ -3,7 +3,7 @@
 > **WhatsApp voice as the primary UI for the `mshalia` ERP** — a domain-agnostic, tool-using AI operations assistant.
 > This document is the **single source of truth**: target architecture, current-vs-target gap, and the phased roadmap.
 > **Architecture note (2026-07):** the platform was originally designed as three runtimes (Go gateway / Python FastAPI+LangGraph backend / Next.js dashboard, see git history). It has since been **consolidated into a single Go binary** (`module sawt-go`, built as `sawt-gateway`) that owns the WhatsApp socket, the reasoning loop, speech, and the operator dashboard in one process. This document describes the **current Go implementation** — it supersedes the old three-runtime diagram.
-> Companion docs: [`README.md`](README.md) (docs index) · [`IMPLEMENTATION-PLAN.md`](IMPLEMENTATION-PLAN.md) (production-readiness status + go-live roadmap) · [`DEPLOYMENT.md`](DEPLOYMENT.md) (deploy/ops runbook) · [`BACKLOG.md`](BACKLOG.md) (feature backlog + delivery record) · [`mshalia-side.md`](mshalia-side.md) (external ERP-gateway brief) · [`REFERENCE_REPO_SKILLS.md`](REFERENCE_REPO_SKILLS.md) (⚠️ reference-only — LangGraph/Python-flavored patterns, kept for the `mshalia`-side ERP Gateway tool-contract concepts).
+> Companion docs: [`README.md`](README.md) (docs index) · [`IMPLEMENTATION-PLAN.md`](IMPLEMENTATION-PLAN.md) (readiness status, scorecard, roadmap + feature backlog) · [`DEPLOYMENT.md`](DEPLOYMENT.md) (deploy/ops runbook) · [`LOCAL-TESTING.md`](LOCAL-TESTING.md) (local test tiers) · [`mshalia-side.md`](mshalia-side.md) (external ERP-gateway brief).
 
 ---
 
@@ -62,7 +62,7 @@ WhatsApp reply (text + voice)
 
 **What's unchanged:** the *external* signed channel from this binary to `mshalia`'s ERP Agent Gateway (`x-swa-signature` / `x-swa-timestamp`, `HMAC-SHA256(secret, "{timestamp}.{rawBody}")`, secret = `AGENT_GATEWAY_SECRET`) — implemented identically in `internal/erp/client.go`.
 
-**Env vars actually consumed** (`config/config.go` + `main.go`): `DATABASE_URL`, `PORT`, `AGENT_GATEWAY_SECRET`, `MSHALIA_API_URL`, `NIM_API_KEY`, `NIM_BASE_URL`, `NIM_MODEL`, `STT_PROVIDER`, `STT_MODEL`, `OPENAI_API_KEY`, `OPENAI_API_BASE`, `LLM_FALLBACK_MODEL`, `HF_API_KEY`, `TTS_PROVIDER`, `TTS_MODEL`, `PAIR_PHONE_NUMBER`, `SESSION_SECRET`, `SECURE_COOKIE`, `GROQ_API_KEY`, `GCP_API_KEY`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `ERROR_WEBHOOK_URL`, `RETENTION_DAYS`, `VOICE_STORAGE_BUCKET`, `VOICE_STORAGE_PREFIX`, `VOICE_SPOOL_DIR`, `ALLOW_MISSING_FFMPEG`, and `GOOGLE_APPLICATION_CREDENTIALS` (GCS ADC in dev). See [`DEPLOYMENT.md`](DEPLOYMENT.md) §5 for the full reference table. (The old `GATEWAY_SHARED_SECRET` is gone.)
+**Env vars actually consumed** (`config/config.go` + `main.go`): `DATABASE_URL`, `PORT`, `AGENT_GATEWAY_SECRET`, `MSHALIA_API_URL`, `NIM_API_KEY`, `NIM_BASE_URL`, `NIM_MODEL`, `STT_PROVIDER`, `STT_MODEL`, `OPENAI_API_KEY`, `OPENAI_API_BASE`, `LLM_FALLBACK_MODEL`, `HF_API_KEY`, `TTS_PROVIDER`, `TTS_MODEL`, `PAIR_PHONE_NUMBER`, `SESSION_SECRET`, `SECURE_COOKIE`, `GROQ_API_KEY`, `GCP_API_KEY`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `ERROR_WEBHOOK_URL`, `RETENTION_DAYS`, `VOICE_STORAGE_BUCKET`, `VOICE_STORAGE_PREFIX`, `VOICE_SPOOL_DIR`, `ALLOW_MISSING_FFMPEG`, `MAX_INFLIGHT`, `LOG_FORMAT`, and `GOOGLE_APPLICATION_CREDENTIALS` (GCS ADC in dev). See [`DEPLOYMENT.md`](DEPLOYMENT.md) §5 for the full reference table. (The old `GATEWAY_SHARED_SECRET` is gone.)
 
 ---
 
@@ -70,7 +70,7 @@ WhatsApp reply (text + voice)
 
 Legend: ✅ built · ⚠️ partial · ⛔ missing · 🛑 critical defect (must fix before any real deployment).
 
-*Updated 2026-07-03 after executing [`IMPLEMENTATION-PLAN.md`](IMPLEMENTATION-PLAN.md) Phases 0–6 (commits `a7f914f`..`2dbaa80`). "✅ (unverified live)" = built, unit-tested where testable, but not yet exercised against a real paired WhatsApp number + live `mshalia` + real LLM/STT/TTS credentials in this environment.*
+*Updated after executing [`IMPLEMENTATION-PLAN.md`](IMPLEMENTATION-PLAN.md) Phases 0–6 and the agentic-gateway audit remediation (all Blocker/Critical/Minor items closed — see IMPLEMENTATION-PLAN §5). "✅ (unverified live)" = built, unit-tested where testable, but not yet exercised against a real paired WhatsApp number + live `mshalia` + real LLM/STT/TTS credentials in this environment.*
 
 | Capability | State | Gap to close |
 |---|---|---|
@@ -99,8 +99,9 @@ Legend: ✅ built · ⚠️ partial · ⛔ missing · 🛑 critical defect (must
 | Rate limiting | ✅ login 10/5min per IP; inbound WhatsApp 8/min per chat with one Arabic warn reply (Phase 0) | limits are in-memory — reset on restart, single-instance only |
 | Session management | ⚠️ HMAC-signed cookie, ephemeral `SESSION_SECRET` if unset (warned at boot) | set `SESSION_SECRET` in prod; still single-instance by design ([A3]) |
 | PII / retention controls | ✅ (Phase 6) `RETENTION_DAYS` (default 90): stt/tts history + conversation turns purged, `wa_activity` transcripts redacted in place, daily | region pinning / encryption-at-rest remain whatever Neon provides |
-| Observability | ✅ (Phase 4) per-message trace id (= WhatsApp message id) on every pipeline log line; `ERROR_WEBHOOK_URL` error/panic reporting with trace attached | metrics/dashboards; LangSmith-style LLM tracing |
-| Testing | ✅ **75 test functions across 14 files** — auth cookies, CSRF, HMAC contract, intent cleaning, tool-loop bounds + role filtering, memory, confirmation lifecycle, provider fallback, voice-note store, whatsmeow, web handlers, 7-scenario eval suite | no coverage gate; the `speech` package + `main.go`'s handler remain thin |
+| Observability | ✅ per-message trace id (= WhatsApp message id) on every pipeline log line; `ERROR_WEBHOOK_URL` error/panic reporting with trace attached; `/healthz`·`/readyz`·`/metrics` endpoints; `log/slog` (text or `LOG_FORMAT=json`); durable `tool_executions` step log (audit) | Prometheus-style metrics/dashboards; uptime alerting; LangSmith-style LLM tracing |
+| Agentic durability & resilience | ✅ (audit) inbound dedup (`processed_messages`), atomic confirmation claim (no double-execute), ERP retry/backoff + deterministic idempotency key + trace header, graceful HTTP shutdown + server timeouts, per-message 120s deadline | resumable state machine / saga / deterministic replay remain out of scope (IMPLEMENTATION-PLAN §5) |
+| Testing | ✅ **141 test functions across 24 files** — auth cookies, CSRF, HMAC contract, intent cleaning, tool-loop bounds + role filtering, memory, confirmation lifecycle (incl. overwrite regression), provider fallback, speech providers (fakes), voice-note store, whatsmeow, web handlers, 7-scenario eval suite | no coverage gate; `main.go`'s handler remains thin |
 | CI | ✅ `.github/workflows/ci.yml` — build + vet + `test -race -cover` on push/PR | — |
 | Repo hygiene | ✅ `.gitignore` added, `go.sum` tracked (Phase 0) | — |
 
@@ -166,7 +167,7 @@ Our client now calls **39 tool ids across 6 agents** (see [`mshalia-side.md`](ms
 
 ## 7. Data & Schema
 
-- **Platform:** Neon Postgres. Schema source of truth is now the raw `schema.sql` at the repo root (embedded via `//go:embed schema.sql` in `main.go`), executed idempotently on every boot — **not** Drizzle/TypeScript anymore. Tables (14): `settings, tts_history, stt_history, webhook_logs, agents, users, health_check, wa_contacts, wa_activity, conversation_turns, conversation_state, pending_confirmations, wa_messages, wa_voice_notes` (`whatsmeow`'s own `sqlstore` package separately manages its own device/session tables in the same database).
+- **Platform:** Neon Postgres. Schema source of truth is now the raw `schema.sql` at the repo root (embedded via `//go:embed schema.sql` in `main.go`), executed idempotently on every boot — **not** Drizzle/TypeScript anymore. Tables (16): `settings, tts_history, stt_history, webhook_logs, agents, users, health_check, wa_contacts, wa_activity, conversation_turns, conversation_state, pending_confirmations, wa_messages, wa_voice_notes, processed_messages` (inbound dedup), `tool_executions` (durable per-tool step log) (`whatsmeow`'s own `sqlstore` package separately manages its own device/session tables in the same database).
 - **Agent config** lives in the `agents` table (`system_prompt`, `llm {vendor,url,model}`, `asr/tts`, `max_history`, `mcp_servers`, `skills`) — the assigned agent's prompt is resolved per contact/agent by `internal/workflow/engine.go`'s `resolveSystemPrompt` (contact prompt override → assigned agent → default agent → the spec's built-in prompt).
 - **ERP:** Firestore, path-nested `organizations/{orgId}/**` (multi-tenant), unchanged, lives in `mshalia`.
 
