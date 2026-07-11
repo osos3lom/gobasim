@@ -98,6 +98,9 @@ func main() {
 		case identity == nil:
 			log.Printf("identity/resolve: phone %s is UNLINKED (no ERP account)", *phone)
 		default:
+			if erp.ApplyDefaultOrg(identity, cfg.DefaultOrgID) {
+				log.Printf("identity: applied DEFAULT_ORG_ID=%q fallback for privileged orgless actor %s", cfg.DefaultOrgID, identity.UID)
+			}
 			log.Printf("identity: uid=%s role=%s org=%v", identity.UID, identity.Role, identity.OrgIDs)
 		}
 	}

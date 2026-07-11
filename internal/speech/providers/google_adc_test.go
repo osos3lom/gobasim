@@ -3,6 +3,7 @@ package providers
 import (
 	"context"
 	"errors"
+	"sawt-go/internal/agentcfg"
 	"sync"
 	"testing"
 
@@ -224,3 +225,37 @@ func TestNewGoogleADCProvider_InvalidCredentialsPathFailsCleanly(t *testing.T) {
 		t.Fatal("expected error for a nonexistent GOOGLE_APPLICATION_CREDENTIALS path, got nil")
 	}
 }
+
+func TestGoogleADCSynthesize_PerAgentVoice(t *testing.T) {
+	fake := &fakeTTSAPI{resp: &texttospeechpb.SynthesizeSpeechResponse{AudioContent: []byte("hello")}}
+	p := newGoogleADCProviderFromAPIs(nil, fake)
+
+	voice := agentcfg.TTS{
+		LanguageCode: "en-US",
+		VoiceName:    "en-US-Wavenet-F",
+		Gender:       "FEMALE",
+		Speed:        1.2,
+	}
+	ctx := agentcfg.WithVoice(context.Background(), voice)
+
+	audio, err := p.Synthesize(ctx, "hello", "ar")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(audio) != "hello" {
+		t.Errorf("unexpected audio: %q", string(audio))
+	}
+	if fake.lastReq.Voice.LanguageCode != "en-US" {
+		t.Errorf("expected en-US, got %q", fake.lastReq.Voice.LanguageCode)
+	}
+	if fake.lastReq.Voice.Name != "en-US-Wavenet-F" {
+		t.Errorf("expected en-US-Wavenet-F, got %q", fake.lastReq.Voice.Name)
+	}
+	if fake.lastReq.Voice.SsmlGender != texttospeechpb.SsmlVoiceGender_FEMALE {
+		t.Errorf("expected FEMALE gender, got %v", fake.lastReq.Voice.SsmlGender)
+	}
+	if float32(fake.lastReq.AudioConfig.SpeakingRate) != 1.2 {
+		t.Errorf("expected speaking rate 1.2, got %v", fake.lastReq.AudioConfig.SpeakingRate)
+	}
+}
+

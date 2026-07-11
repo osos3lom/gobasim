@@ -54,7 +54,7 @@ the HMAC-signed ERP client (`internal/erp`), conversation memory + risk-gated co
   deterministic idempotency + trace header, `/healthz` · `/readyz` · `/metrics`, `log/slog`
   (text/JSON), graceful shutdown + HTTP server timeouts, per-message 120 s deadline.
 - PII retention job, error/panic webhook, per-message trace ids, voice-note archival to GCS.
-- CI (`build` + `vet` + `test -race -cover`) and **149 test functions across 24 test files**
+- CI (`build` + `vet` + `test -race -cover`) and **151 test functions across 24 test files**
   (incl. the 7-scenario eval suite and fake-based speech-provider coverage).
 
 **Partially verified live (M9 in progress):** a partial live run confirmed the front half of the
@@ -80,7 +80,7 @@ intentional constraint **[A3]**, not a defect. Scores mirror the §3 category sc
 
 | # | Category | Weight | Score | Contribution |
 |---|---|--:|--:|--:|
-| 1 | Core functionality | 15 | 80 | 12.00 |
+| 1 | Core functionality | 15 | 82 | 12.30 |
 | 2 | Code quality | 6 | 88 | 5.28 |
 | 3 | Architecture | 6 | 82 | 4.92 |
 | 4 | Go best practices | 5 | 88 | 4.40 |
@@ -95,14 +95,15 @@ intentional constraint **[A3]**, not a defect. Scores mirror the §3 category sc
 | 13 | Reliability | 5 | 77 | 3.85 |
 | 14 | Scalability | 3 | 50 | 1.50 |
 | 15 | Maintainability | 4 | 83 | 3.32 |
-| | **Total** | **100** | — | **77.01** |
+| | **Total** | **100** | — | **77.31** |
 
-**~77%** (up from 75% after this round of fixes). Landed: the identity default-org fallback
-(`internal/erp/fallback.go` + `DEFAULT_ORG_ID`) that unblocks the ERP path for privileged actors
-(D-6a); confirmation that CI already enforces `golangci-lint` + a 60% coverage gate; and a repo-root
-`README.md` + `CONTRIBUTING.md`. Still capped by items that are **not** in-repo code — the ERP
-workflow has not been re-verified live, the 39 `mshalia` tools still `404`, and there is no
-validated TLS path or vaulted secrets.
+**~77%** (up from 75% after this round of fixes). Landed and **verified**: the identity default-org
+fallback (`internal/erp/fallback.go` + `DEFAULT_ORG_ID`) that unblocks the ERP path for privileged
+actors (D-6a) — re-verified locally via `cmd/wfcli` (phone `0546906905` → `org-demo` → `operations`
+intent → `list_horses` executed twice against a local `mshalia`); CI enforces `golangci-lint`
+(pinned v1.64.8) + a 60% coverage gate; repo-root `README.md` + `CONTRIBUTING.md` present; 151 tests
+green. Still capped by items that are **not** in-repo code — a full M9 over real WhatsApp voice
+against the **deployed** `mshalia` (all 39 tools), a validated TLS path, and vaulted secrets.
 
 **How to read it.** ~77% means the engineering is largely complete and well-hardened, but the
 project is **not yet production-ready**: the ERP workflow has not completed end-to-end (identity fix
@@ -117,11 +118,13 @@ on more code here.
 Each entry: **Status · Evidence · Missing · Risk · Effort.** Risk ∈ {Critical, High, Medium, Low}.
 Effort is engineering-days for one competent Go dev.
 
-### 3.1 Core Functionality — 80 · High
+### 3.1 Core Functionality — 82 · High
 - **Status:** Full pipeline implemented; front half (WhatsApp pairing, voice send/receive, STT,
-  LLM, TTS) verified live. The identity blocker that broke the ERP path live is now fixed in code:
-  a configurable default-org fallback for privileged actors (`internal/erp/fallback.go`,
-  `DEFAULT_ORG_ID`) — pending live re-verification.
+  LLM, TTS) verified live. The identity blocker that broke the ERP path is fixed **and verified**:
+  the default-org fallback for privileged actors (`internal/erp/fallback.go`, `DEFAULT_ORG_ID`) was
+  confirmed via `cmd/wfcli` — `0546906905` → `org-demo` → `operations` → `list_horses` executed
+  against a local `mshalia`. Remaining: the same over real WhatsApp voice against the deployed
+  `mshalia` (all 39 tools).
 - **Evidence:** `main.go:handleIncomingMessage`; `internal/workflow/engine.go`;
   `internal/erp/fallback.go`; `internal/speech/{stt,tts}.go`; `internal/whatsmeow/client.go`.
 - **Missing:** live re-verification of the fixed identity path (M9); `mshalia`-side gateway tools
@@ -131,8 +134,8 @@ Effort is engineering-days for one competent Go dev.
 ### 3.2 Code Quality — 88 · Low
 - Clean, idiomatic, small cohesive files; consistent `%w` error wrapping; `go:embed` assets;
   `go vet` clean in CI; **`golangci-lint` now enforced in CI** (`.golangci.yml` +
-  `.github/workflows/ci.yml`). **Missing:** the `.golangci.yml` is v1-format while CI pulls
-  golangci-lint `latest` (v2) — pin the action to v1.x or migrate the config. · 0.5 day.
+  `.github/workflows/ci.yml`, action pinned to v1.64.8 to match the v1-format config). **Missing:**
+  no `gosec` security-lint pass. · 0.5 day.
 
 ### 3.3 Architecture — 82 · Low
 - Sound single-binary design; provider-cascade reused across STT/TTS/LLM; declarative `agentSpec`
@@ -146,7 +149,7 @@ Effort is engineering-days for one competent Go dev.
   is a package-level global (minor). · 0.5 day.
 
 ### 3.5 Testing Coverage — 77 · Medium
-- **149 test functions across 24 files** — auth/CSRF, HMAC ERP contract, intent cleaning,
+- **151 test functions across 24 files** — auth/CSRF, HMAC ERP contract, intent cleaning,
   tool-loop bounds + role filtering, memory, confirmation lifecycle (incl. the overwrite
   regression), rate limiter, voice-note store, speech providers (fakes), the identity default-org
   fallback, a 7-scenario eval suite. **CI now runs `-race` with a 60% minimum-coverage gate**
@@ -223,7 +226,7 @@ Effort is engineering-days for one competent Go dev.
 |---|---|---|---|---|
 | D-1 | Real secrets in `.env.production` on disk | Security | Critical | Gitignored & never in git history, but must be rotated + vaulted before go-live. |
 | D-6 | Partial M9 only — ERP path unverified | Functionality | Critical | Front half (pairing/voice/LLM/STT/TTS) live-confirmed; the ERP interaction workflow has never completed end-to-end. |
-| D-6a | Super-admin phone identity resolution returns no org | Functionality | High → **fixed in code** | Confirmed live: `0546906905` did not resolve to an org. **Resolved** by a configurable default-org fallback for privileged roles (`internal/erp/fallback.go`, `DEFAULT_ORG_ID`, wired in `main.go` after resolve; 8-case unit test). Needs a live re-run to close fully, and `DEFAULT_ORG_ID` must be set in the deploy env. |
+| D-6a | Super-admin phone identity resolution returns no org | Functionality | ~~High~~ **Resolved (verified locally)** | Configurable default-org fallback for privileged roles (`internal/erp/fallback.go`, `DEFAULT_ORG_ID`, wired in `main.go` + `cmd/wfcli`; 8-case unit test). **Verified** via `wfcli`: `0546906905` → `org-demo` → `list_horses` executed against local `mshalia`. Remaining: same over real WhatsApp against the deployed `mshalia`; `DEFAULT_ORG_ID` must be set in the deploy env. |
 | D-5 | `mshalia` gateway tools missing | Functionality | High | 39 tool ids `404`; external dependency — see `mshalia-side.md`. |
 | D-7 | No in-app TLS; `SECURE_COOKIE=true` needs a proxy | Security | High | Reverse-proxy path documented but not validated end-to-end. |
 | D-8 | Identity resolved every message (no cache) | Performance | Medium | Extra HMAC round-trip per inbound message. |
@@ -231,7 +234,7 @@ Effort is engineering-days for one competent Go dev.
 | D-10 | `middleware.RealIP` trusts spoofable headers | Security | Medium | Safe only behind a trusted proxy; login limiter itself now keys on the true peer (C5). |
 | D-11 | `main.go` handler orchestration untested | Testing | Medium | Coverage concentrated in workflow/web/erp/speech. |
 | D-12 | No repo-root `README.md` / `CONTRIBUTING.md` | Documentation | ~~Low~~ **Resolved** | Repo-root `README.md` + `CONTRIBUTING.md` now present. |
-| D-13 | No lint gate (`golangci-lint`) in CI | Code quality | ~~Low~~ **Resolved** | CI now runs `golangci-lint` (`.golangci.yml`) + a 60% coverage gate. Caveat: v1 config vs golangci-lint `latest` (v2) — pin or migrate. |
+| D-13 | No lint gate (`golangci-lint`) in CI | Code quality | ~~Low~~ **Resolved** | CI now runs `golangci-lint` (`.golangci.yml`, action pinned to v1.64.8) + a 60% coverage gate. |
 
 > **Resolved & removed** (were D-2/D-3/D-4 in the pre-audit plan): no `/healthz`/`/metrics`, no HTTP
 > server timeouts, no graceful shutdown — all now implemented (§5).
@@ -300,11 +303,11 @@ Ordered by production-blocking priority. Priority ∈ {P0, P1, P2, P3}; effort i
 ### Phase 2 — Core Functionality Completion
 
 - **2a. M9 live verification (partial — complete the ERP path)** — P0 · 2–3 days
-  (coordination-bound). A partial run is done (log below). Remaining: fix identity resolution
-  (D-6a), point at a deployed `mshalia` with all 39 tools live, and run the 7 eval scenarios
-  (`internal/workflow/eval_test.go`) as real voice + text conversations. **DoD:** identity resolves
-  for the test actor; each scenario replies correctly; operations writes go through confirmation;
-  failures triaged and fixed.
+  (coordination-bound). A partial run is done (log below); identity resolution (D-6a) is now fixed
+  and verified locally via `cmd/wfcli`. Remaining: point at a deployed `mshalia` with all 39 tools
+  live, and run the 7 eval scenarios (`internal/workflow/eval_test.go`) as real voice + text
+  WhatsApp conversations with `DEFAULT_ORG_ID` set. **DoD:** each scenario replies correctly;
+  operations writes go through confirmation; failures triaged and fixed.
 
   **M9 partial live run — log (folded in from the former `docs/M9-VERIFICATION.md`).** Recorded
   against real services, a paired WhatsApp device, live LLM/STT/TTS, and the `mshalia` ERP.
@@ -312,10 +315,10 @@ Ordered by production-blocking priority. Priority ∈ {P0, P1, P2, P3}; effort i
   | # | Area | Result | Notes |
   |---|---|---|---|
   | 1 | WhatsApp connection & session transport | **PASS** | QR generated via `/dashboard/whatsapp`, scanned on a physical phone; reconnect + remote-logout recovery (`RecreateClient()`) validated. |
-  | 2 | Identity resolution & fallback | **FAIL** | Super-admin `0546906905` did **not** resolve to an org — no `orgIds`, and the `org-demo` fallback did not fire on the phone path. This gates the whole ERP workflow (D-6a). |
+  | 2 | Identity resolution & fallback | **FAIL → FIXED** | On the WhatsApp run, super-admin `0546906905` did **not** resolve to an org. Fixed by the `DEFAULT_ORG_ID` fallback (D-6a) and **re-verified via `cmd/wfcli`**: `0546906905` now maps to `org-demo`. |
   | 3 | LLM reasoning loop | **PASS** | NIM `meta/llama-3.1-70b-instruct` primary; intent routing worked (e.g. greetings → `other` → general chat). |
   | 4 | Voice pipeline (STT/TTS) | **PASS** | Arabic voice notes sent **and** received; Groq Whisper STT + Wavenet/MMS/local TTS; ffmpeg Ogg/Opus granule-seek fix (`internal/audio/audio.go:45`) and dynamic waveform (`main.go:770`) verified on-device. |
-  | 5 | ERP tool execution (operations) | **BLOCKED / NOT RUN** | Gated by #2, and all 39 `mshalia` tools `404` (D-5). No operations write was exercised end-to-end. |
+  | 5 | ERP tool execution (operations) | **PARTIAL (local)** | Via `wfcli` after the D-6a fix, `operations` intent → `list_horses` executed twice against a **local** `mshalia`. Not yet run over real WhatsApp against the **deployed** `mshalia` (39 tools `404` there — D-5). |
 
   > **Net:** the transport + speech + reasoning half is live-validated; the identity + ERP half is
   > not. A prior standalone `M9-VERIFICATION.md` claimed a full end-to-end PASS (incl. identity

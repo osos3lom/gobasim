@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sawt-go/internal/agentcfg"
 	"strings"
 	"sync"
 	"testing"
@@ -310,3 +311,46 @@ func TestGoogleSynthesize_ConcurrentRequestsAreRaceFree(t *testing.T) {
 		}
 	}
 }
+
+func TestGoogleSynthesize_PerAgentVoice(t *testing.T) {
+	var gotPayload map[string]interface{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		json.Unmarshal(b, &gotPayload)
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"audioContent":"aGVsbG8="}`))
+	}))
+	defer srv.Close()
+
+	p := NewGoogleProvider("test-key", WithGoogleTTSBaseURL(srv.URL))
+
+	voice := agentcfg.TTS{
+		LanguageCode: "en-US",
+		VoiceName:    "en-US-Wavenet-F",
+		Gender:       "FEMALE",
+		Speed:        1.2,
+	}
+	ctx := agentcfg.WithVoice(context.Background(), voice)
+
+	_, err := p.Synthesize(ctx, "hello", "ar")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	voiceParams := gotPayload["voice"].(map[string]interface{})
+	if voiceParams["languageCode"] != "en-US" {
+		t.Errorf("expected languageCode 'en-US', got %q", voiceParams["languageCode"])
+	}
+	if voiceParams["name"] != "en-US-Wavenet-F" {
+		t.Errorf("expected name 'en-US-Wavenet-F', got %q", voiceParams["name"])
+	}
+	if voiceParams["ssmlGender"] != "FEMALE" {
+		t.Errorf("expected ssmlGender 'FEMALE', got %q", voiceParams["ssmlGender"])
+	}
+
+	audioConfig := gotPayload["audioConfig"].(map[string]interface{})
+	if audioConfig["speakingRate"] != 1.2 {
+		t.Errorf("expected speakingRate 1.2, got %v", audioConfig["speakingRate"])
+	}
+}
+

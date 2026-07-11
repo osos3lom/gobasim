@@ -244,6 +244,7 @@ Legend: **R** = required, **P** = required for that feature path, **○** = opti
 | `TTS_PROVIDER` / `TTS_MODEL` | ○ | `google` / — | Same: TTS cascade is key-driven. |
 | `AGENT_GATEWAY_SECRET` | P | — | HMAC secret shared with mshalia's `/api/agent/v1/*` (ERP tools). **Secret.** |
 | `MSHALIA_API_URL` | P | `http://localhost:3001` | mshalia ERP base URL. |
+| `DEFAULT_ORG_ID` | ○ | — | Fallback organization ID for resolved-but-orgless privileged identities (closes the M9 gap). |
 | `PAIR_PHONE_NUMBER` | ○ | — | If set, auto-requests a WhatsApp pairing code at boot (e.g. `9665XXXXXXXXX`). |
 | `ERROR_WEBHOOK_URL` | ○ | — | Slack/Discord-compatible JSON webhook for errors & panics. Recommended in prod. |
 | `VOICE_STORAGE_BUCKET` | ○ | — | GCS bucket for voice-note archival. **Empty disables the feature entirely.** |
