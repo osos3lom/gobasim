@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"sawt-go/web"
+)
 
 // D1 regression: a first-contact auto-create must never start enabled. The
 // agent talking to a stranger without operator opt-in is the failure mode
@@ -17,7 +21,7 @@ func TestNewContactParamsDefaultsDisabled(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p := newContactParams(tt.chatJID, tt.pushName)
+			p := newContactParams(tt.chatJID, tt.pushName, web.BlueprintDefaults{})
 			if p.Enabled {
 				t.Fatal("auto-created contacts must default to disabled (explicit operator opt-in)")
 			}
@@ -31,5 +35,28 @@ func TestNewContactParamsDefaultsDisabled(t *testing.T) {
 				t.Error("new contacts must start with no agent assignment or prompt override")
 			}
 		})
+	}
+}
+
+// The System Default Blueprint may deliberately override D1: when AutoEnable is
+// set, new contacts are created enabled and pre-seeded with the default brain
+// and prompt override. This is the explicit operator opt-in escape hatch, so it
+// must be exercised alongside the safe default above.
+func TestNewContactParamsBlueprintAutoEnable(t *testing.T) {
+	bp := web.BlueprintDefaults{
+		DefaultAgentID:        "agent_ops",
+		DefaultPromptOverride: "Prioritize breeding inquiries.",
+		AutoEnable:            true,
+	}
+	p := newContactParams("966500000002@s.whatsapp.net", "Layla", bp)
+
+	if !p.Enabled {
+		t.Fatal("AutoEnable blueprint must create the contact enabled")
+	}
+	if p.AgentID == nil || *p.AgentID != "agent_ops" {
+		t.Errorf("AgentID = %v, want pointer to %q", p.AgentID, "agent_ops")
+	}
+	if p.PromptOverride == nil || *p.PromptOverride != "Prioritize breeding inquiries." {
+		t.Errorf("PromptOverride = %v, want the blueprint override", p.PromptOverride)
 	}
 }

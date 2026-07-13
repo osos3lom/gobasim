@@ -29,7 +29,7 @@ WhatsApp reply (text + voice)
 
 ### Prerequisites
 
-- **Go 1.23+**
+- **Go 1.25+**
 - **PostgreSQL** (Neon or local)
 - **ffmpeg** on PATH (required for voice notes; set `ALLOW_MISSING_FFMPEG=true` for text-only dev)
 - At least one LLM API key (`NIM_API_KEY` or `OPENAI_API_KEY`)

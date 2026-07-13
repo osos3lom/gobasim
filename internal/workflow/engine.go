@@ -47,6 +47,20 @@ type State struct {
 	// Summary is the rolling summary of older conversation turns that no
 	// longer fit in the replayed message window.
 	Summary string
+	// Resume carries durable slot-filling context (F-1 fix) when this turn is
+	// resuming a parked tool call that was missing required args.
+	// executeToolLoop, when this is set, seeds the LLM with the known args and
+	// still-missing fields instead of starting the tool call cold.
+	Resume *ResumeCollecting
+}
+
+// ResumeCollecting carries a "collecting" pending_confirmations row's state
+// into the tool-calling loop across turns. See clarification.go.
+type ResumeCollecting struct {
+	ToolID        string
+	KnownArgs     map[string]interface{}
+	MissingFields []string
+	RoundsSoFar   int32
 }
 
 // NIM / OpenAI Chat Completion API Request & Tool schema structs
@@ -380,6 +394,15 @@ func (e *WorkflowEngine) Execute(ctx context.Context, state *State) error {
 		return nil
 	}
 
+	// 0.5. A chat mid-slot-filling (a parked tool call missing required args,
+	// F-1 fix) consumes this message next, resuming the same tool loop instead
+	// of reclassifying.
+	if resumed, err := e.resumeCollecting(ctx, state); err != nil {
+		trace.Logf(ctx, "[workflow] Collecting-state resolution failed: %v", err)
+	} else if resumed {
+		return nil
+	}
+
 	// Route client role directly to clientAgent bypassing intent classification
 	if state.ActorIdentity != nil && strings.ToLower(state.ActorIdentity.Role) == "client" {
 		trace.Logf(ctx, "[workflow] Client role detected. Routing directly to clientAgent tool loop.")
@@ -489,12 +512,29 @@ func (e *WorkflowEngine) executeToolLoop(ctx context.Context, state *State, spec
 	tools = append(tools, skills.tools...)
 	tools = append(tools, deleg.tools...)
 
+	// Lookup for the required-args validation gate (F-1 fix) below — built
+	// once per turn from the same tools this loop exposes to the model, so it
+	// transparently covers MCP-owned tools too.
+	toolsByName := make(map[string]ToolDefinition, len(tools))
+	for _, t := range tools {
+		toolsByName[t.Function.Name] = t
+	}
+
 	systemPrompt := e.resolveSystemPrompt(ctx, state.ChatID, spec.DefaultPrompt)
 	if state.Summary != "" {
 		systemPrompt += "\n\nSummary of the conversation so far:\n" + state.Summary
 	}
 	systemPrompt += bundle.resources
 	systemPrompt += skills.manifest
+	if state.Resume != nil {
+		argsJSON, _ := json.Marshal(state.Resume.KnownArgs)
+		systemPrompt += fmt.Sprintf(
+			"\n\nYou previously started calling the tool '%s' with these arguments already "+
+				"confirmed by the user: %s. The user's next message below answers the "+
+				"still-missing field(s): %s. Call '%s' again with ALL fields filled in (the ones "+
+				"above plus the new answer) — do not ask again for fields already listed above.",
+			state.Resume.ToolID, string(argsJSON), strings.Join(state.Resume.MissingFields, ", "), state.Resume.ToolID)
+	}
 
 	// state.Messages is already bounded by the memory subsystem's per-agent
 	// max_history (LoadConversation) — no second, hardcoded truncation here.
@@ -538,6 +578,20 @@ func (e *WorkflowEngine) executeToolLoop(ctx context.Context, state *State, spec
 			case name == delegateTool && deleg.active:
 				toolRes = e.runDelegate(ctx, deleg.sub, str(args["agent"]), str(args["task"]))
 			default:
+				// Required-args validation gate (F-1 fix): before this call is
+				// parked or executed, check it against the tool's own declared
+				// schema (auto-deriving fields like an English name from an Arabic
+				// one where configured). Applies uniformly to both branches below.
+				if def, known := toolsByName[name]; known {
+					complete, cErr := e.enforceRequiredArgs(ctx, state, spec.Name, def, args)
+					if cErr != nil {
+						return fmt.Errorf("failed to validate required args for %s: %w", name, cErr)
+					}
+					if !complete {
+						return nil // clarifying question already set as state.FinalReply
+					}
+				}
+
 				// Risk gate: MCP tools carry their own read-only hint (write-capable
 				// ones default to medium), ERP tools use the static risk table.
 				// Anything above "low" parks for confirmation instead of executing.

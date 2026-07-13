@@ -260,6 +260,7 @@ func main() {
 	webServer := web.NewServer(cfg, queries, waMgr, ttsOrch)
 	webServer.SetVoiceStore(voiceStore) // nil-safe: no-ops when archival is disabled
 	webServer.SetDB(pool)               // drives the /readyz DB probe (C3)
+	webServer.SetERPClient(erpClient)
 	router := webServer.GetRouter()
 
 	// The server handle is declared here (not inside the goroutine) so the
@@ -397,21 +398,28 @@ func seedAdminUser(ctx context.Context, pool *pgxpool.Pool, queries *database.Qu
 	return nil
 }
 
-// newContactParams builds the row for a first-contact auto-create. Enabled is
-// always false: a human operator must explicitly opt each chat in from the
-// dashboard before the agent may reply (product rule D1; the schema default
-// wa_contacts.enabled DEFAULT FALSE encodes the same intent).
-func newContactParams(chatJID, pushName string) database.CreateOrUpdateWaContactParams {
+// newContactParams builds the row for a first-contact auto-create using the default system
+// blueprint (if configured). Enabled is false unless bp.AutoEnable is true
+// (explicit operator opt-in override, product rule D1).
+func newContactParams(chatJID, pushName string, bp web.BlueprintDefaults) database.CreateOrUpdateWaContactParams {
 	name := pushName
 	if name == "" {
 		name = strings.Split(chatJID, "@")[0]
 	}
+	var agentIDPtr *string
+	if bp.DefaultAgentID != "" {
+		agentIDPtr = &bp.DefaultAgentID
+	}
+	var promptOverridePtr *string
+	if bp.DefaultPromptOverride != "" {
+		promptOverridePtr = &bp.DefaultPromptOverride
+	}
 	return database.CreateOrUpdateWaContactParams{
 		ChatID:         chatJID,
 		Name:           name,
-		Enabled:        false,
-		AgentID:        nil,
-		PromptOverride: nil,
+		Enabled:        bp.AutoEnable,
+		AgentID:        agentIDPtr,
+		PromptOverride: promptOverridePtr,
 	}
 }
 
@@ -486,13 +494,20 @@ func handleIncomingMessage(
 		// in the dashboard, then drop the message: the agent must never talk
 		// to a new person until an operator explicitly enables the chat
 		// (explicit opt-in; matches wa_contacts.enabled DEFAULT FALSE).
-		contact, err = queries.CreateOrUpdateWaContact(ctx, newContactParams(evt.Info.Chat.String(), evt.Info.PushName))
+		var bp web.BlueprintDefaults
+		if settings, sErr := queries.GetSettings(ctx); sErr == nil && len(settings.BotConfig) > 0 {
+			_ = json.Unmarshal(settings.BotConfig, &bp)
+		}
+		contact, err = queries.CreateOrUpdateWaContact(ctx, newContactParams(evt.Info.Chat.String(), evt.Info.PushName, bp))
 		if err != nil {
 			trace.Logf(ctx, "Inbound: Warning: Failed to auto-create contact %s: %v", evt.Info.Chat.String(), err)
 			return
 		}
-		trace.Logf(ctx, "Inbound: Auto-created contact %s (%s) as disabled; awaiting operator opt-in", contact.Name, contact.ChatID)
-		return
+		if !contact.Enabled {
+			trace.Logf(ctx, "Inbound: Auto-created contact %s (%s) as disabled; awaiting operator opt-in", contact.Name, contact.ChatID)
+			return
+		}
+		trace.Logf(ctx, "Inbound: Auto-created contact %s (%s) as enabled via blueprint override", contact.Name, contact.ChatID)
 	}
 	if !contact.Enabled {
 		// Drop message processing if contact is disabled

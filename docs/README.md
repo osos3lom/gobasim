@@ -14,10 +14,11 @@ pipeline, and the operator web dashboard — in a single process, on a GCP e2-mi
 | Understand the architecture & product intent | [BLUEPRINT.md](BLUEPRINT.md) |
 | Set up a dev machine, build, deploy, or operate it | [DEPLOYMENT.md](DEPLOYMENT.md) |
 | Run and verify the workflow locally before deploying | [LOCAL-TESTING.md](LOCAL-TESTING.md) |
+| Run the live end-to-end verification (M9) checklist | [M9-CHECKLIST.md](M9-CHECKLIST.md) |
 | See readiness status, the scorecard, roadmap & feature backlog | [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md) |
 | Implement the ERP gateway on the `mshalia` side | [mshalia-side.md](mshalia-side.md) |
 
-## Document map (6 docs)
+## Document map (7 docs)
 
 - **[BLUEPRINT.md](BLUEPRINT.md)** — target & current architecture, the current-vs-target gap
   table, agent architecture, ERP integration, schema, security model, and assumptions. The
@@ -27,6 +28,8 @@ pipeline, and the operator web dashboard — in a single process, on a GCP e2-mi
   firewall, backups), and security hardening.
 - **[LOCAL-TESTING.md](LOCAL-TESTING.md)** — how to exercise the workflow locally before GCP: tiered
   tests against a locally-running `mshalia` (or the bundled `cmd/mockerp`) with real LLM/STT.
+- **[M9-CHECKLIST.md](M9-CHECKLIST.md)** — the live end-to-end verification runbook (`cmd/erpcheck` +
+  `cmd/wfcli` + real WhatsApp) and the latest run log with pass/fail results and findings.
 - **[IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md)** — the status doc: a weighted **Project
   Ready %** KPI, a 15-category scorecard, the risk register, the closed agentic-gateway audit, a
   prioritized go-live roadmap, and the dashboard/observability feature backlog (Epics H/O/S/T).

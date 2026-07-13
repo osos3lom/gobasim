@@ -21,6 +21,7 @@ import (
 	"sawt-go/database"
 	"sawt-go/internal/agentcfg"
 	"sawt-go/internal/audio"
+	"sawt-go/internal/erp"
 	"sawt-go/internal/monitor"
 	"sawt-go/internal/ratelimit"
 	"sawt-go/internal/speech"
@@ -46,7 +47,7 @@ var templatesFS embed.FS
 // Regenerate web/static/app.css via `npm run build:css` after
 // editing web/static/src/input.css or template class names.
 //
-//go:embed static/app.css static/workflow.js
+//go:embed static/app.css static/workflow.js static/whatsapp.js
 var staticFS embed.FS
 
 type Server struct {
@@ -61,6 +62,7 @@ type Server struct {
 	loginLimiter *ratelimit.Limiter
 	voiceStore   *voicenotes.Store // optional; nil disables archival
 	db           dbPinger          // optional; drives the /readyz DB probe
+	erpClient    *erp.Client
 }
 
 // dbPinger is the narrow slice of *pgxpool.Pool the readiness probe needs.
@@ -80,6 +82,49 @@ func (s *Server) SetVoiceStore(store *voicenotes.Store) {
 // nil-safe (keeps NewServer's signature stable for tests/harness).
 func (s *Server) SetDB(p dbPinger) {
 	s.db = p
+}
+
+// SetERPClient sets the ERP client for identity resolution.
+func (s *Server) SetERPClient(client *erp.Client) {
+	s.erpClient = client
+}
+
+// BlueprintDefaults holds system default settings for new contacts.
+type BlueprintDefaults struct {
+	DefaultAgentID        string `json:"agent_id"`
+	DefaultPromptOverride string `json:"prompt_override"`
+	AutoEnable            bool   `json:"auto_enable"`
+}
+
+// resolveRole resolves a contact's role from the ERP.
+// Perf note: N live calls for the chat list is acceptable at single-operator scale;
+// revisit with a persisted resolved_role column if contact counts grow.
+func (s *Server) resolveRole(ctx context.Context, chatID string, cache map[string]string) string {
+	if s.erpClient == nil {
+		return ""
+	}
+	phone := strings.Split(chatID, "@")[0]
+	if phone == "" {
+		return ""
+	}
+	if cache != nil {
+		if role, ok := cache[phone]; ok {
+			return role
+		}
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	identity, err := s.erpClient.ResolveIdentity(reqCtx, phone)
+	if err != nil || identity == nil {
+		if cache != nil {
+			cache[phone] = ""
+		}
+		return ""
+	}
+	if cache != nil {
+		cache[phone] = identity.Role
+	}
+	return identity.Role
 }
 
 // NewServer wires up the dashboard's dependencies. ttsOrch is the same
@@ -276,6 +321,7 @@ func (s *Server) GetRouter() chi.Router {
 		r.Get("/dashboard/whatsapp/contacts", s.handleGetWaContactsFragment)
 		r.With(s.requireCSRF).Post("/dashboard/whatsapp/contacts/{chatID}/toggle", s.handlePostToggleWaContact)
 		r.With(s.requireCSRF).Post("/dashboard/whatsapp/contacts/{chatID}/agent", s.handlePostAssignWaContactAgent)
+		r.With(s.requireCSRF).Post("/dashboard/whatsapp/settings", s.handlePostWhatsAppSettings)
 		r.Get("/dashboard/whatsapp/chats", s.handleGetWaChatsFragment)
 		r.Get("/dashboard/whatsapp/chats/{chatID}/messages", s.handleGetWaMessagesFragment)
 		r.With(s.requireCSRF).Post("/dashboard/whatsapp/chats/{chatID}/send-text", s.handlePostSendWaText)
@@ -511,19 +557,72 @@ func (s *Server) fetchWaContactRows(ctx context.Context, query, csrfToken string
 	return rows
 }
 
+type chatRow struct {
+	database.ListWaChatsSummaryRow
+	Role string
+}
+
+// agentIDValue dereferences a nullable assigned-agent id into a plain string
+// ("" when unset). The pilot panel's brain <select> compares this against each
+// option's id to mark the current selection; html/template can't compare a
+// *string against a string option value directly, so the pilot render maps must
+// pass the dereferenced value as "AgentIDStr".
+func agentIDValue(id *string) string {
+	if id == nil {
+		return ""
+	}
+	return *id
+}
+
+// resolveRolesForChats resolves the ERP role for each chat, bounded to a small
+// number of concurrent ERP calls. Resolving sequentially made an ERP outage
+// stall the whole dashboard for up to N*2s (each resolveRole call carries a 2s
+// timeout); fanning out caps the worst case at roughly ceil(N/roleResolveConcurrency)*2s.
+// Each goroutine writes only its own slice slot and passes a nil cache, so no
+// shared state needs locking (erp.Client has its own concurrency-safe cache).
+func (s *Server) resolveRolesForChats(ctx context.Context, chats []database.ListWaChatsSummaryRow) []chatRow {
+	const roleResolveConcurrency = 8
+	out := make([]chatRow, len(chats))
+	sem := make(chan struct{}, roleResolveConcurrency)
+	var wg sync.WaitGroup
+	for i, c := range chats {
+		out[i] = chatRow{ListWaChatsSummaryRow: c}
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(idx int, chatID string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			out[idx].Role = s.resolveRole(ctx, chatID, nil)
+		}(i, c.ChatID)
+	}
+	wg.Wait()
+	return out
+}
+
 func (s *Server) handleGetWhatsAppPage(w http.ResponseWriter, r *http.Request) {
 	token := s.ensureCSRFToken(w, r)
 	chats, err := s.queries.ListWaChatsSummary(r.Context())
 	if err != nil {
 		chats = []database.ListWaChatsSummaryRow{}
 	}
+
+	wrappedChats := s.resolveRolesForChats(r.Context(), chats)
+
+	var bp BlueprintDefaults
+	settings, err := s.queries.GetSettings(r.Context())
+	if err == nil && len(settings.BotConfig) > 0 {
+		_ = json.Unmarshal(settings.BotConfig, &bp)
+	}
+
 	s.renderWhatsAppCard(w, r, map[string]interface{}{
-		"Username":  r.Context().Value(UsernameContextKey),
-		"Page":      "whatsapp",
-		"Partial":   false,
-		"Contacts":  s.fetchWaContactRows(r.Context(), "", token),
-		"Chats":     chats,
-		"CSRFToken": token,
+		"Username":        r.Context().Value(UsernameContextKey),
+		"Page":            "whatsapp",
+		"Partial":         false,
+		"Contacts":        s.fetchWaContactRows(r.Context(), "", token),
+		"Chats":           wrappedChats,
+		"CSRFToken":       token,
+		"Blueprint":       bp,
+		"PublishedAgents": s.fetchPublishedAgents(r.Context()),
 	})
 }
 
@@ -560,15 +659,29 @@ func (s *Server) handlePostToggleWaContact(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	s.renderTemplate(w, "whatsapp.html", map[string]interface{}{
-		"Row": waContactRow{
-			WaContact:       updated,
-			CSRFToken:       s.ensureCSRFToken(w, r),
-			PublishedAgents: s.fetchPublishedAgents(r.Context()),
-		},
-		"PartialView": "contact_row",
-		"Partial":     true,
-	})
+	view := r.FormValue("view")
+	if view == "pilot" {
+		role := s.resolveRole(r.Context(), chatID, nil)
+		s.renderTemplate(w, "whatsapp.html", map[string]interface{}{
+			"WaContact":       updated,
+			"CSRFToken":       s.ensureCSRFToken(w, r),
+			"PublishedAgents": s.fetchPublishedAgents(r.Context()),
+			"Role":            role,
+			"AgentIDStr":      agentIDValue(updated.AgentID),
+			"PartialView":     "pilot_panel",
+			"Partial":         true,
+		})
+	} else {
+		s.renderTemplate(w, "whatsapp.html", map[string]interface{}{
+			"Row": waContactRow{
+				WaContact:       updated,
+				CSRFToken:       s.ensureCSRFToken(w, r),
+				PublishedAgents: s.fetchPublishedAgents(r.Context()),
+			},
+			"PartialView": "contact_row",
+			"Partial":     true,
+		})
+	}
 }
 
 // handlePostAssignWaContactAgent sets (or clears) a contact's assigned agent
@@ -618,15 +731,29 @@ func (s *Server) handlePostAssignWaContactAgent(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	s.renderTemplate(w, "whatsapp.html", map[string]interface{}{
-		"Row": waContactRow{
-			WaContact:       updated,
-			CSRFToken:       s.ensureCSRFToken(w, r),
-			PublishedAgents: s.fetchPublishedAgents(r.Context()),
-		},
-		"PartialView": "contact_row",
-		"Partial":     true,
-	})
+	view := r.FormValue("view")
+	if view == "pilot" {
+		role := s.resolveRole(r.Context(), chatID, nil)
+		s.renderTemplate(w, "whatsapp.html", map[string]interface{}{
+			"WaContact":       updated,
+			"CSRFToken":       s.ensureCSRFToken(w, r),
+			"PublishedAgents": s.fetchPublishedAgents(r.Context()),
+			"Role":            role,
+			"AgentIDStr":      agentIDValue(updated.AgentID),
+			"PartialView":     "pilot_panel",
+			"Partial":         true,
+		})
+	} else {
+		s.renderTemplate(w, "whatsapp.html", map[string]interface{}{
+			"Row": waContactRow{
+				WaContact:       updated,
+				CSRFToken:       s.ensureCSRFToken(w, r),
+				PublishedAgents: s.fetchPublishedAgents(r.Context()),
+			},
+			"PartialView": "contact_row",
+			"Partial":     true,
+		})
+	}
 }
 
 func (s *Server) handleGetWhatsAppStatus(w http.ResponseWriter, r *http.Request) {
@@ -709,8 +836,11 @@ func (s *Server) handleGetWaChatsFragment(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		chats = []database.ListWaChatsSummaryRow{}
 	}
+
+	wrappedChats := s.resolveRolesForChats(r.Context(), chats)
+
 	s.renderTemplate(w, "whatsapp.html", map[string]interface{}{
-		"Chats":       chats,
+		"Chats":       wrappedChats,
 		"PartialView": "chats",
 		"Partial":     true,
 	})
@@ -738,12 +868,69 @@ func (s *Server) handleGetWaMessagesFragment(w http.ResponseWriter, r *http.Requ
 		messages[i], messages[j] = messages[j], messages[i]
 	}
 
+	// We only load the full layout when not paginating historical messages
+	if beforeSeq > 0 {
+		s.renderTemplate(w, "whatsapp.html", map[string]interface{}{
+			"ChatID":      chatID,
+			"Messages":    messages,
+			"CSRFToken":   s.ensureCSRFToken(w, r),
+			"PartialView": "messages",
+			"Partial":     true,
+		})
+		return
+	}
+
+	contact, err := s.queries.GetWaContact(r.Context(), chatID)
+	if err != nil {
+		contact = database.WaContact{
+			ChatID: chatID,
+		}
+	}
+
+	// The 24h SLA window is derived from the newest inbound message in the
+	// loaded page (waMessagesThreadLimit). If more than that many bot/operator
+	// messages have been sent since the last inbound, no inbound appears in the
+	// page and the window is reported "Closed" even if it's technically still
+	// open — an acceptable edge at current scale; a dedicated "latest inbound
+	// timestamp" query would make it exact.
+	var lastInbound *database.WaMessage
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Direction == "in" {
+			lastInbound = &messages[i]
+			break
+		}
+	}
+
+	var windowOpen bool
+	var windowClosesIn string
+	if lastInbound != nil {
+		elapsed := time.Since(lastInbound.CreatedAt)
+		if elapsed < 24*time.Hour {
+			windowOpen = true
+			closesAt := lastInbound.CreatedAt.Add(24 * time.Hour)
+			remaining := time.Until(closesAt)
+			if remaining > 0 {
+				hours := int(remaining.Hours())
+				mins := int(remaining.Minutes()) % 60
+				windowClosesIn = fmt.Sprintf("%dh %dm", hours, mins)
+			}
+		}
+	}
+
+	role := s.resolveRole(r.Context(), chatID, nil)
+
 	s.renderTemplate(w, "whatsapp.html", map[string]interface{}{
-		"ChatID":      chatID,
-		"Messages":    messages,
-		"CSRFToken":   s.ensureCSRFToken(w, r),
-		"PartialView": "messages",
-		"Partial":     true,
+		"ChatID":          chatID,
+		"Messages":        messages,
+		"CSRFToken":       s.ensureCSRFToken(w, r),
+		"WindowOpen":      windowOpen,
+		"WindowClosesIn":  windowClosesIn,
+		"WaContact":       contact,
+		"PublishedAgents": s.fetchPublishedAgents(r.Context()),
+		"Role":            role,
+		"AgentIDStr":      agentIDValue(contact.AgentID),
+		"PartialView":     "thread_pilot",
+		"Partial":         true,
 	})
 }
 
@@ -883,12 +1070,15 @@ func (s *Server) handleGetWorkflowsPage(w http.ResponseWriter, r *http.Request) 
 // handed to the client-side list editor as JSON (see web/static/workflow.js).
 type agentRow struct {
 	database.Agent
-	HasUnpublishedChanges bool
-	LLM                   agentcfg.LLM
-	TTS                   agentcfg.TTS
-	SubAgents             agentcfg.SubAgents
-	SkillsJSON            string
-	MCPJSON               string
+	HasUnpublishedChanges          bool
+	LLM                            agentcfg.LLM
+	TTS                            agentcfg.TTS
+	SubAgents                      agentcfg.SubAgents
+	SkillsJSON                     string
+	MCPJSON                        string
+	ClarificationRules             agentcfg.ClarificationRules
+	ClarificationToolOverridesJSON string
+	ClarificationDeriveRulesJSON   string
 }
 
 // KnownDelegateAgents lists the intent specs a sub-agent delegation may target,
@@ -896,9 +1086,11 @@ type agentRow struct {
 var KnownDelegateAgents = []string{"operations", "accounting", "administration", "sales", "breeding", "client"}
 
 // DelegateChecked reports whether a delegate agent is in this row's allow-list,
-// so the template can pre-check its box.
+// so the template can pre-check its box. Membership is shown regardless of the
+// enabled flag, so an operator sees the saved allow-list even while delegation
+// is toggled off.
 func (a agentRow) DelegateChecked(name string) bool {
-	return a.SubAgents.Allows(name) || contains(a.SubAgents.AllowedAgents, name)
+	return contains(a.SubAgents.AllowedAgents, name)
 }
 
 func contains(xs []string, want string) bool {
@@ -934,14 +1126,23 @@ func (s *Server) renderWorkflowsPage(w http.ResponseWriter, r *http.Request, err
 		if err != nil {
 			sub = agentcfg.DefaultSubAgents()
 		}
+		cr, err := agentcfg.ParseClarificationRules(a.ClarificationRules)
+		if err != nil {
+			cr = agentcfg.DefaultClarificationRules()
+		}
+		toolOverridesJSON, _ := json.Marshal(cr.ToolOverrides)
+		deriveRulesJSON, _ := json.Marshal(cr.DeriveRules)
 		rows = append(rows, agentRow{
-			Agent:                 a,
-			HasUnpublishedChanges: unpublished,
-			LLM:                   llm,
-			TTS:                   tts,
-			SubAgents:             sub,
-			SkillsJSON:            jsonOrDefault(a.Skills, "[]"),
-			MCPJSON:               jsonOrDefault(a.McpServers, "[]"),
+			Agent:                          a,
+			HasUnpublishedChanges:          unpublished,
+			LLM:                            llm,
+			TTS:                            tts,
+			SubAgents:                      sub,
+			SkillsJSON:                     jsonOrDefault(a.Skills, "[]"),
+			MCPJSON:                        jsonOrDefault(a.McpServers, "[]"),
+			ClarificationRules:             cr,
+			ClarificationToolOverridesJSON: jsonOrDefault(toolOverridesJSON, "[]"),
+			ClarificationDeriveRulesJSON:   jsonOrDefault(deriveRulesJSON, "[]"),
 		})
 	}
 
@@ -1003,9 +1204,10 @@ func (s *Server) handlePostCreateWorkflow(w http.ResponseWriter, r *http.Request
 		StartOfSpeech: true,
 		EndOfSpeech:   true,
 		MaxHistory:    int32(agentcfg.DefaultHistory),
-		McpServers:    []byte(`[]`),
-		Skills:        []byte(`[]`),
-		SubAgents:     agentcfg.DefaultSubAgents().Marshal(),
+		McpServers:         []byte(`[]`),
+		Skills:             []byte(`[]`),
+		SubAgents:          agentcfg.DefaultSubAgents().Marshal(),
+		ClarificationRules: agentcfg.DefaultClarificationRules().Marshal(),
 	})
 	if err != nil {
 		log.Printf("web: failed to create agent %q: %v", name, err)
@@ -1142,6 +1344,27 @@ func (s *Server) buildUpdateParams(r *http.Request, agent database.Agent) (datab
 		return database.UpdateAgentWorkflowParams{}, err.Error()
 	}
 
+	// Block 5 — Clarification & Auto-Fill Rules. The two list editors submit
+	// JSON the same way skills/mcp_servers do; the agent-wide toggle is an
+	// ordinary checkbox.
+	var toolOverrides []agentcfg.ToolClarificationOverride
+	if err := json.Unmarshal([]byte(emptyToArray(r.FormValue("clarification_tool_overrides"))), &toolOverrides); err != nil {
+		return database.UpdateAgentWorkflowParams{}, "Invalid clarification tool-override data."
+	}
+	var deriveRules []agentcfg.DeriveRuleConfig
+	if err := json.Unmarshal([]byte(emptyToArray(r.FormValue("clarification_derive_rules"))), &deriveRules); err != nil {
+		return database.UpdateAgentWorkflowParams{}, "Invalid clarification derive-rule data."
+	}
+	clarificationEnabled := formBool(r, "clarification_enabled")
+	cr := agentcfg.ClarificationRules{
+		Enabled:       &clarificationEnabled,
+		ToolOverrides: toolOverrides,
+		DeriveRules:   deriveRules,
+	}
+	if err := cr.Validate(); err != nil {
+		return database.UpdateAgentWorkflowParams{}, err.Error()
+	}
+
 	return database.UpdateAgentWorkflowParams{
 		ID:                        r.FormValue("id"),
 		Name:                      name,
@@ -1161,6 +1384,7 @@ func (s *Server) buildUpdateParams(r *http.Request, agent database.Agent) (datab
 		EndOfSpeech:               formBool(r, "end_of_speech"),
 		SelectiveAttentionLocking: formBool(r, "selective_attention_locking"),
 		FillerWords:               formBool(r, "filler_words"),
+		ClarificationRules:        cr.Marshal(),
 	}, ""
 }
 
@@ -1317,4 +1541,62 @@ func (b *LogBroker) Write(p []byte) (n int, err error) {
 		// Drop log lines if channel is full to prevent daemon deadlock
 	}
 	return len(p), nil
+}
+
+func (s *Server) handlePostWhatsAppSettings(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		feedbackErr(w, "Malformed form submission.")
+		return
+	}
+
+	agentID := strings.TrimSpace(r.FormValue("agent_id"))
+	promptOverride := r.FormValue("prompt_override")
+	autoEnable := r.FormValue("auto_enable") == "on"
+
+	// Fetch settings to preserve other columns
+	settings, err := s.queries.GetSettings(r.Context())
+	if err != nil {
+		feedbackErr(w, "Failed to load current settings.")
+		return
+	}
+
+	// Validate agent_id is empty or exists and is published
+	if agentID != "" {
+		agent, err := s.queries.GetAgent(r.Context(), agentID)
+		if err != nil {
+			feedbackErr(w, "Default agent not found.")
+			return
+		}
+		if agent.Status != "published" {
+			feedbackErr(w, "Only published agents can be set as system defaults.")
+			return
+		}
+	}
+
+	// Marshal blueprint defaults into JSON
+	bp := BlueprintDefaults{
+		DefaultAgentID:        agentID,
+		DefaultPromptOverride: promptOverride,
+		AutoEnable:            autoEnable,
+	}
+	bpBytes, err := json.Marshal(bp)
+	if err != nil {
+		feedbackErr(w, "Failed to marshal settings.")
+		return
+	}
+
+	err = s.queries.UpdateSettings(r.Context(), database.UpdateSettingsParams{
+		TtsModel:         settings.TtsModel,
+		ModelIds:         settings.ModelIds,
+		DefaultSpeed:     settings.DefaultSpeed,
+		BotConfig:        bpBytes,
+		AssistantAgentID: settings.AssistantAgentID,
+	})
+	if err != nil {
+		log.Printf("web: failed to update system defaults: %v", err)
+		feedbackErr(w, "Failed to save settings.")
+		return
+	}
+
+	w.Write([]byte("<div class='bg-emerald-900 border border-emerald-500 text-emerald-200 px-4 py-3 rounded'>System defaults saved successfully!</div>"))
 }

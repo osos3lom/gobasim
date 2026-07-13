@@ -4,7 +4,10 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestComputeSignatureMatchesContract(t *testing.T) {
@@ -67,5 +70,68 @@ func TestCallToolWithoutSecretReturnsUnconfigured(t *testing.T) {
 	}
 	if res["code"] != "UNCONFIGURED" {
 		t.Fatalf("expected UNCONFIGURED result, got %v", res)
+	}
+}
+
+func TestResolveIdentityCaching(t *testing.T) {
+	var callCount int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		if r.URL.Path != "/api/agent/v1/identity/resolve" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{
+			"resolved": true,
+			"identity": {
+				"uid": "user123",
+				"phone": "966500000000",
+				"role": "manager",
+				"displayName": "Test User",
+				"orgIds": ["org-demo"]
+			}
+		}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "test-secret")
+	
+	// First call - should hit the server
+	id1, err := client.ResolveIdentity(t.Context(), "966500000000")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if id1 == nil || id1.UID != "user123" {
+		t.Fatalf("unexpected identity: %+v", id1)
+	}
+	if callCount != 1 {
+		t.Fatalf("expected server to be called once, got %d", callCount)
+	}
+
+	// Second call - should hit the cache (callCount remains 1)
+	id2, err := client.ResolveIdentity(t.Context(), "966500000000")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if id2 == nil || id2.UID != "user123" {
+		t.Fatalf("unexpected identity: %+v", id2)
+	}
+	if callCount != 1 {
+		t.Fatalf("expected server call count to remain 1 (hit cache), but got %d", callCount)
+	}
+
+	// Third call with expired TTL - should hit the server again
+	client.cacheTTL = 1 * time.Millisecond
+	time.Sleep(2 * time.Millisecond)
+	id3, err := client.ResolveIdentity(t.Context(), "966500000000")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if id3 == nil || id3.UID != "user123" {
+		t.Fatalf("unexpected identity: %+v", id3)
+	}
+	if callCount != 2 {
+		t.Fatalf("expected server to be called twice after TTL expiration, got %d", callCount)
 	}
 }

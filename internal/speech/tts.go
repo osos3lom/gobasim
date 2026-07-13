@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"sawt-go/config"
 	"sawt-go/internal/agentcfg"
 	"sawt-go/internal/speech/providers"
@@ -22,6 +23,18 @@ func NewTTSOrchestrator(cfg *config.Config) *TTSOrchestrator {
 		log.Println("TTS Orchestrator: Google Cloud TTS provider registered (Rank 1).")
 	} else {
 		log.Println("TTS Orchestrator: Google Cloud TTS provider skipped (GCP_API_KEY not set).")
+	}
+
+	// 1.5. Backup: Google Cloud TTS ADC (Application Default Credentials)
+	if os.Getenv("GOOGLE_APPLICATION_CREDENTIALS") != "" {
+		if adcProvider, err := providers.NewGoogleADCProvider(context.Background()); err == nil {
+			chain = append(chain, adcProvider)
+			log.Println("TTS Orchestrator: Google Cloud TTS ADC provider registered (Rank 1.5).")
+		} else {
+			log.Printf("TTS Orchestrator: failed to create Google Cloud TTS ADC provider: %v", err)
+		}
+	} else {
+		log.Println("TTS Orchestrator: Google Cloud TTS ADC provider skipped (GOOGLE_APPLICATION_CREDENTIALS not set).")
 	}
 
 	// 2. Backup A: Hugging Face Spaces (facebook/mms-tts-ara)

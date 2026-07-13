@@ -10,6 +10,10 @@ import (
 )
 
 type Querier interface {
+	// ClaimCollecting mirrors ClaimPendingConfirmation exactly, atomically
+	// transitioning 'collecting' -> 'collecting_claimed' so two concurrent
+	// inbound messages for the same chat can't both resume the same round.
+	ClaimCollecting(ctx context.Context, chatID string) (PendingConfirmation, error)
 	// ClaimPendingConfirmation atomically transitions a chat's pending row to
 	// 'executing' and returns it. Because the UPDATE matches only status='pending',
 	// exactly one of two concurrent resolvers wins the row; the loser gets no row.
@@ -59,10 +63,14 @@ type Querier interface {
 	RedactWaMessagesBefore(ctx context.Context, createdAt time.Time) error
 	// last_published is stamped only on the draft->published transition (D4);
 	// the CASE reads the pre-update status, per UPDATE..SET semantics. The panel
-	// now edits the full four-block config, so every operator-editable column is set.
+	// now edits the full five-block config, so every operator-editable column is set.
 	UpdateAgentWorkflow(ctx context.Context, arg UpdateAgentWorkflowParams) (Agent, error)
 	UpdateSettings(ctx context.Context, arg UpdateSettingsParams) error
 	UpdateWaContactSettings(ctx context.Context, arg UpdateWaContactSettingsParams) (WaContact, error)
+	// UpsertCollecting parks a tool call that is still missing required args
+	// (F-1 fix). Mirrors UpsertPendingConfirmation's upsert shape exactly, but
+	// with status='collecting' and the extra slot-filling columns populated.
+	UpsertCollecting(ctx context.Context, arg UpsertCollectingParams) error
 	UpsertConversationState(ctx context.Context, arg UpsertConversationStateParams) error
 	UpsertPendingConfirmation(ctx context.Context, arg UpsertPendingConfirmationParams) error
 	// Voice-note archive (Firebase Cloud Storage ledger) ------------------------

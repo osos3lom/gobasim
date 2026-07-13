@@ -35,6 +35,7 @@ type Agent struct {
 	McpServers                []byte     `json:"mcp_servers"`
 	Skills                    []byte     `json:"skills"`
 	SubAgents                 []byte     `json:"sub_agents"`
+	ClarificationRules        []byte     `json:"clarification_rules"`
 }
 
 type ConversationState struct {
@@ -69,6 +70,9 @@ type PendingConfirmation struct {
 	ClaimedAt     *time.Time `json:"claimed_at"`
 	CreatedAt     time.Time  `json:"created_at"`
 	ExpiresAt     time.Time  `json:"expires_at"`
+	MissingFields []byte     `json:"missing_fields"`
+	CollectRounds int32      `json:"collect_rounds"`
+	Intent        string     `json:"intent"`
 }
 
 type ProcessedMessage struct {

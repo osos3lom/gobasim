@@ -61,12 +61,16 @@ CREATE TABLE IF NOT EXISTS agents (
     max_history INTEGER NOT NULL DEFAULT 10,
     mcp_servers JSONB NOT NULL DEFAULT '[]'::jsonb,
     skills JSONB NOT NULL DEFAULT '[]'::jsonb,
-    sub_agents JSONB NOT NULL DEFAULT '{"enabled":false,"max_tokens":0,"allowed_agents":[]}'::jsonb
+    sub_agents JSONB NOT NULL DEFAULT '{"enabled":false,"max_tokens":0,"allowed_agents":[]}'::jsonb,
+    clarification_rules JSONB NOT NULL DEFAULT '{}'::jsonb
 );
 -- Idempotent migration for deployments created before sub_agents existed
 -- (schema bootstrap re-runs on every start, same pattern as pending_confirmations).
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS
     sub_agents JSONB NOT NULL DEFAULT '{"enabled":false,"max_tokens":0,"allowed_agents":[]}'::jsonb;
+-- Idempotent migration for deployments created before clarification_rules
+-- existed. An empty object is a no-op override layer (see agentcfg.ParseClarificationRules).
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS clarification_rules JSONB NOT NULL DEFAULT '{}'::jsonb;
 
 CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
@@ -137,16 +141,32 @@ CREATE TABLE IF NOT EXISTS pending_confirmations (
     -- status gates the atomic claim: a row is 'pending' until exactly one
     -- resolver flips it to 'executing' (see ClaimPendingConfirmation). This
     -- prevents two concurrent "yes" replies from both executing the same
-    -- (financial) tool. claimed_at records when that happened.
+    -- (financial) tool. claimed_at records when that happened. 'collecting' /
+    -- 'collecting_claimed' are a second, independent pause state (see below)
+    -- for a tool call still missing required args — never confused with a
+    -- 'pending' confirmation because chat_id is the PK either way.
     status TEXT NOT NULL DEFAULT 'pending',
     claimed_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    expires_at TIMESTAMPTZ NOT NULL
+    expires_at TIMESTAMPTZ NOT NULL,
+    -- The following three columns are used only by the 'collecting' /
+    -- 'collecting_claimed' slot-filling flow (F-1 fix): missing_fields is the
+    -- still-needed arg list, collect_rounds bounds the cross-turn
+    -- back-and-forth, and intent records the originating agentSpec name so a
+    -- resume can look the spec back up via specByName without reclassifying.
+    missing_fields JSONB NOT NULL DEFAULT '[]'::jsonb,
+    collect_rounds INTEGER NOT NULL DEFAULT 0,
+    intent TEXT NOT NULL DEFAULT ''
 );
 -- Idempotent migration for deployments created before the status/claimed_at
 -- columns existed (schema bootstrap runs on every start).
 ALTER TABLE pending_confirmations ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending';
 ALTER TABLE pending_confirmations ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ;
+-- Idempotent migration for deployments created before the slot-filling
+-- ('collecting') state existed.
+ALTER TABLE pending_confirmations ADD COLUMN IF NOT EXISTS missing_fields JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE pending_confirmations ADD COLUMN IF NOT EXISTS collect_rounds INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE pending_confirmations ADD COLUMN IF NOT EXISTS intent TEXT NOT NULL DEFAULT '';
 
 -- Message-browsing store for the dashboard's Messages tab: every message
 -- sent/received while this instance is running, distinct from wa_activity

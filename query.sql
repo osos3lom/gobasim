@@ -55,25 +55,28 @@ INSERT INTO agents (
     last_published, template, system_prompt, greeting_message,
     failure_message, model_type, asr, llm, tts, turn_detection,
     start_of_speech, end_of_speech, selective_attention_locking,
-    filler_words, max_history, mcp_servers, skills, sub_agents
+    filler_words, max_history, mcp_servers, skills, sub_agents,
+    clarification_rules
 ) VALUES (
     $1, $2, $3, $4, $5, NOW(),
     $6, $7, $8, $9,
     $10, $11, $12, $13, $14, $15,
     $16, $17, $18,
-    $19, $20, $21, $22, $23
+    $19, $20, $21, $22, $23,
+    $24
 ) RETURNING *;
 
 -- name: UpdateAgentWorkflow :one
 -- last_published is stamped only on the draft->published transition (D4);
 -- the CASE reads the pre-update status, per UPDATE..SET semantics. The panel
--- now edits the full four-block config, so every operator-editable column is set.
+-- now edits the full five-block config, so every operator-editable column is set.
 UPDATE agents
 SET name = $2, system_prompt = $3, greeting_message = $4, failure_message = $5,
     asr = $6, llm = $7, tts = $8, max_history = $9,
     mcp_servers = $11, skills = $12, sub_agents = $13,
     turn_detection = $14, start_of_speech = $15, end_of_speech = $16,
     selective_attention_locking = $17, filler_words = $18,
+    clarification_rules = $19,
     last_published = CASE WHEN $10::text = 'published' AND status <> 'published' THEN NOW() ELSE last_published END,
     status = $10, last_edited = NOW()
 WHERE id = $1
@@ -164,13 +167,17 @@ ON CONFLICT (chat_id) DO UPDATE
 SET summary = EXCLUDED.summary, summarized_through = EXCLUDED.summarized_through, updated_at = NOW();
 
 -- name: UpsertPendingConfirmation :exec
-INSERT INTO pending_confirmations (chat_id, tool_id, args, org_id, acting_user_uid, description, status, claimed_at, created_at, expires_at)
-VALUES ($1, $2, $3, $4, $5, $6, 'pending', NULL, NOW(), $7)
+-- Also resets missing_fields/collect_rounds/intent to their defaults on
+-- conflict, so a completed 'collecting' row that graduates into an ordinary
+-- confirmation (F-1 fix) doesn't carry stale slot-filling state forward.
+INSERT INTO pending_confirmations (chat_id, tool_id, args, org_id, acting_user_uid, description, status, claimed_at, created_at, expires_at, missing_fields, collect_rounds, intent)
+VALUES ($1, $2, $3, $4, $5, $6, 'pending', NULL, NOW(), $7, '[]'::jsonb, 0, '')
 ON CONFLICT (chat_id) DO UPDATE
 SET tool_id = EXCLUDED.tool_id, args = EXCLUDED.args, org_id = EXCLUDED.org_id,
     acting_user_uid = EXCLUDED.acting_user_uid, description = EXCLUDED.description,
     status = 'pending', claimed_at = NULL,
-    created_at = NOW(), expires_at = EXCLUDED.expires_at;
+    created_at = NOW(), expires_at = EXCLUDED.expires_at,
+    missing_fields = '[]'::jsonb, collect_rounds = 0, intent = '';
 
 -- name: GetPendingConfirmation :one
 SELECT * FROM pending_confirmations
@@ -191,6 +198,29 @@ DELETE FROM pending_confirmations WHERE chat_id = $1;
 
 -- name: PurgeExpiredConfirmations :exec
 DELETE FROM pending_confirmations WHERE expires_at < $1;
+
+-- UpsertCollecting parks a tool call that is still missing required args
+-- (F-1 fix). Mirrors UpsertPendingConfirmation's upsert shape exactly, but
+-- with status='collecting' and the extra slot-filling columns populated.
+-- name: UpsertCollecting :exec
+INSERT INTO pending_confirmations (chat_id, tool_id, args, org_id, acting_user_uid, description, status, claimed_at, created_at, expires_at, missing_fields, collect_rounds, intent)
+VALUES ($1, $2, $3, $4, $5, $6, 'collecting', NULL, NOW(), $7, $8, $9, $10)
+ON CONFLICT (chat_id) DO UPDATE
+SET tool_id = EXCLUDED.tool_id, args = EXCLUDED.args, org_id = EXCLUDED.org_id,
+    acting_user_uid = EXCLUDED.acting_user_uid, description = EXCLUDED.description,
+    status = 'collecting', claimed_at = NULL,
+    created_at = NOW(), expires_at = EXCLUDED.expires_at,
+    missing_fields = EXCLUDED.missing_fields, collect_rounds = EXCLUDED.collect_rounds,
+    intent = EXCLUDED.intent;
+
+-- ClaimCollecting mirrors ClaimPendingConfirmation exactly, atomically
+-- transitioning 'collecting' -> 'collecting_claimed' so two concurrent
+-- inbound messages for the same chat can't both resume the same round.
+-- name: ClaimCollecting :one
+UPDATE pending_confirmations
+SET status = 'collecting_claimed', claimed_at = NOW()
+WHERE chat_id = $1 AND status = 'collecting'
+RETURNING *;
 
 -- name: PurgeSttHistoryBefore :exec
 DELETE FROM stt_history WHERE ts < $1;

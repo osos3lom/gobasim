@@ -1,0 +1,9 @@
+sawt.example.com {
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:8080 {
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+    # Enforce HSTS at the edge
+    header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+}

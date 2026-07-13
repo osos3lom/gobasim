@@ -41,6 +41,18 @@ func NewSTTOrchestrator(cfg *config.Config) *STTOrchestrator {
 		log.Println("STT Orchestrator: Google Cloud STT provider skipped (GCP_API_KEY not set).")
 	}
 
+	// 3.5. Backup C: Google Cloud STT ADC (Application Default Credentials)
+	if os.Getenv("GOOGLE_APPLICATION_CREDENTIALS") != "" {
+		if adcProvider, err := providers.NewGoogleADCProvider(context.Background()); err == nil {
+			chain = append(chain, adcProvider)
+			log.Println("STT Orchestrator: Google Cloud STT ADC provider registered (Rank 3.5).")
+		} else {
+			log.Printf("STT Orchestrator: failed to create Google Cloud STT ADC provider: %v", err)
+		}
+	} else {
+		log.Println("STT Orchestrator: Google Cloud STT ADC provider skipped (GOOGLE_APPLICATION_CREDENTIALS not set).")
+	}
+
 	// 4. Final Fallback: Local Whisper (whisper.cpp wrapper)
 	whisperCLI, _ := exec.LookPath("whisper-cli")
 	whisperModel := "models/ggml-tiny.bin"

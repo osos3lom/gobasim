@@ -84,6 +84,12 @@
                 </h1>
             </div>
             <div class="flex items-center space-x-4">
+                {{if eq .Page "whatsapp"}}
+                <button type="button" onclick="document.getElementById('wa-blueprint-modal').classList.remove('hidden')"
+                    class="px-3 py-1.5 bg-indigo-900/60 border border-indigo-700/50 hover:bg-indigo-800 text-gray-200 text-xs font-semibold rounded-lg transition duration-200 flex items-center gap-1.5 shadow-sm">
+                    ⚙️ Default Blueprint
+                </button>
+                {{end}}
                 <span class="flex h-3 w-3 relative">
                     <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                     <span class="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>

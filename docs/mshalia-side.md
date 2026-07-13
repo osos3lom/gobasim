@@ -2,12 +2,18 @@
 
 > **Audience:** the `mshalia` (Next.js + Firestore ERP) development team.
 > **From:** the `sawt-gateway` (Go / WhatsApp assistant) team.
-> **Purpose:** `sawt-gateway` already ships a generic client that calls your ERP Agent Gateway
-> over a signed HTTP contract. It now calls **39 tool ids across 6 agents** (operations, accounting,
-> administration, client self-service, sales, breeding — see §4). None are verified against a live
-> `mshalia` yet, so every call currently **`404`s** until you implement these endpoints. This
-> document specifies exactly what to build so our two sides line up with **zero code changes on our
-> end** (our `CallTool` is generic over `toolId`).
+> **Purpose:** `sawt-gateway` ships a generic client that calls your ERP Agent Gateway over a signed
+> HTTP contract for **39 tool ids across 6 agents** (operations, accounting, administration, client
+> self-service, sales, breeding — see §4).
+>
+> **Status (2026-07-13):** ✅ **all 39 endpoints are implemented in `mshalia`** (`app/api/agent/v1/*`
+> + `lib/agent-gateway/tools/*`), match these ids **id-for-id**, and were **verified live** against a
+> local `mshalia` — `identity/resolve`, the HMAC contract, `list_horses` (read), and `register_horse`
+> (confirmation-gated write) all round-tripped correctly (see `sawt-gateway/docs/M9-CHECKLIST.md`).
+> This document therefore serves as the **standing contract reference** — the field-by-field source of
+> truth to keep both sides aligned, with **zero code changes on our end** (our `CallTool` is generic
+> over `toolId`). Remaining items are in §8 (a Firestore index for the `client`-role resolve path;
+> the optional reference MD).
 >
 > **What we need back from you:** once you implement these endpoints, publish a **reference
 > Markdown file** (`mshalia-agent-gateway-reference.md`) documenting each tool's exact
@@ -134,13 +140,12 @@ any tool runs (an identity cache/TTL is planned on our side to reduce this load)
 **Unlinked number (still HTTP 200):**
 
 ```json
-{ "resolved": false, "identity": null }
+{ "resolved": false, "reason": "unknown_phone" }
 ```
 
 **Our handling (from `internal/erp/client.go`):**
 - Non-200 → error surfaced to our monitor; the user still gets a reply, just no ERP tool access.
-- `resolved: false` or `identity: null` → treated as **unlinked**; the assistant replies but tools
-  are unavailable for that number.
+- `resolved: false` → treated as **unlinked** (no ERP tool access); the assistant replies normally.
 
 **Identity fields consumed by our side** (`erp.Identity`): `uid`, `phone`, `role`, `displayName`,
 `orgIds[]`. The `uid` becomes `actingUserUid` and the first/selected `orgIds` entry becomes `orgId`
@@ -291,7 +296,7 @@ These live entirely on your side — our client is intentionally thin. Mirror th
 
 - **Allow-listed tools only** — reject any `toolId` not in the catalogue with a structured `404`.
 - **Zod input validation** — validate `args` against the schema; reject invalid input with a
-  structured `400` (`code:"INVALID_INPUT"`).
+  structured `400` (`code:"VALIDATION_ERROR"`).
 - **Single-entity, id-addressed writes** — no bulk mutations from the agent.
 - **Soft-delete only**; no hard deletes via the gateway.
 - **Idempotency keys** on writes (`record_expense`, `record_payment`, `update_task_status`) so a
@@ -322,7 +327,7 @@ our client `json.Unmarshal`s the body and fails hard on non-JSON).
 |---|---|---|
 | Success | 200 | `{"ok":true,"data":{…}}` |
 | Bad signature / skew | 401 | `{"ok":false,"error":"signature invalid","code":"UNAUTHORIZED"}` |
-| Invalid `args` | 400 | `{"ok":false,"error":"…","code":"INVALID_INPUT"}` |
+| Invalid `args` | 400 | `{"ok":false,"error":"…","code":"VALIDATION_ERROR"}` |
 | Unknown tool id | 404 | `{"ok":false,"error":"unknown tool","code":"UNKNOWN_TOOL"}` |
 | Acting user lacks permission | 403 | `{"ok":false,"error":"forbidden","code":"FORBIDDEN"}` |
 | Requires approval (amount/risk) | 200 | `{"ok":false,"error":"requires approval","code":"REQUIRES_APPROVAL"}` |
@@ -367,5 +372,6 @@ The integration is "done" when:
 - [ ] The **HMAC contract-test vectors** in your reference MD pass against our Go signer.
 - [ ] `mshalia-agent-gateway-reference.md` is published and shared.
 
-Once these pass, our roadmap item **Phase 2b** (see [`IMPLEMENTATION-PLAN.md`](IMPLEMENTATION-PLAN.md))
-closes and the accounting/administration agents go from `404` to fully functional.
+These pass for the operations read/write path today (verified live, local — M9-CHECKLIST); running
+the full set against a **deployed** `mshalia` closes our roadmap item **Phase 2b** (see
+[`IMPLEMENTATION-PLAN.md`](IMPLEMENTATION-PLAN.md)).

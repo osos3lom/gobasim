@@ -16,7 +16,7 @@ const claimPendingConfirmation = `-- name: ClaimPendingConfirmation :one
 UPDATE pending_confirmations
 SET status = 'executing', claimed_at = NOW()
 WHERE chat_id = $1 AND status = 'pending'
-RETURNING chat_id, tool_id, args, org_id, acting_user_uid, description, status, claimed_at, created_at, expires_at
+RETURNING chat_id, tool_id, args, org_id, acting_user_uid, description, status, claimed_at, created_at, expires_at, missing_fields, collect_rounds, intent
 `
 
 // ClaimPendingConfirmation atomically transitions a chat's pending row to
@@ -37,6 +37,40 @@ func (q *Queries) ClaimPendingConfirmation(ctx context.Context, chatID string) (
 		&i.ClaimedAt,
 		&i.CreatedAt,
 		&i.ExpiresAt,
+		&i.MissingFields,
+		&i.CollectRounds,
+		&i.Intent,
+	)
+	return i, err
+}
+
+const claimCollecting = `-- name: ClaimCollecting :one
+UPDATE pending_confirmations
+SET status = 'collecting_claimed', claimed_at = NOW()
+WHERE chat_id = $1 AND status = 'collecting'
+RETURNING chat_id, tool_id, args, org_id, acting_user_uid, description, status, claimed_at, created_at, expires_at, missing_fields, collect_rounds, intent
+`
+
+// ClaimCollecting mirrors ClaimPendingConfirmation exactly, atomically
+// transitioning 'collecting' -> 'collecting_claimed' so two concurrent
+// inbound messages for the same chat can't both resume the same round.
+func (q *Queries) ClaimCollecting(ctx context.Context, chatID string) (PendingConfirmation, error) {
+	row := q.db.QueryRow(ctx, claimCollecting, chatID)
+	var i PendingConfirmation
+	err := row.Scan(
+		&i.ChatID,
+		&i.ToolID,
+		&i.Args,
+		&i.OrgID,
+		&i.ActingUserUid,
+		&i.Description,
+		&i.Status,
+		&i.ClaimedAt,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.MissingFields,
+		&i.CollectRounds,
+		&i.Intent,
 	)
 	return i, err
 }
@@ -47,14 +81,16 @@ INSERT INTO agents (
     last_published, template, system_prompt, greeting_message,
     failure_message, model_type, asr, llm, tts, turn_detection,
     start_of_speech, end_of_speech, selective_attention_locking,
-    filler_words, max_history, mcp_servers, skills, sub_agents
+    filler_words, max_history, mcp_servers, skills, sub_agents,
+    clarification_rules
 ) VALUES (
     $1, $2, $3, $4, $5, NOW(),
     $6, $7, $8, $9,
     $10, $11, $12, $13, $14, $15,
     $16, $17, $18,
-    $19, $20, $21, $22, $23
-) RETURNING id, name, project_id, hosting_region, status, last_edited, last_published, template, system_prompt, greeting_message, failure_message, model_type, asr, llm, tts, turn_detection, start_of_speech, end_of_speech, selective_attention_locking, filler_words, max_history, mcp_servers, skills, sub_agents
+    $19, $20, $21, $22, $23,
+    $24
+) RETURNING id, name, project_id, hosting_region, status, last_edited, last_published, template, system_prompt, greeting_message, failure_message, model_type, asr, llm, tts, turn_detection, start_of_speech, end_of_speech, selective_attention_locking, filler_words, max_history, mcp_servers, skills, sub_agents, clarification_rules
 `
 
 type CreateAgentParams struct {
@@ -81,6 +117,7 @@ type CreateAgentParams struct {
 	McpServers                []byte     `json:"mcp_servers"`
 	Skills                    []byte     `json:"skills"`
 	SubAgents                 []byte     `json:"sub_agents"`
+	ClarificationRules        []byte     `json:"clarification_rules"`
 }
 
 func (q *Queries) CreateAgent(ctx context.Context, arg CreateAgentParams) (Agent, error) {
@@ -108,6 +145,7 @@ func (q *Queries) CreateAgent(ctx context.Context, arg CreateAgentParams) (Agent
 		arg.McpServers,
 		arg.Skills,
 		arg.SubAgents,
+		arg.ClarificationRules,
 	)
 	var i Agent
 	err := row.Scan(
@@ -135,6 +173,7 @@ func (q *Queries) CreateAgent(ctx context.Context, arg CreateAgentParams) (Agent
 		&i.McpServers,
 		&i.Skills,
 		&i.SubAgents,
+		&i.ClarificationRules,
 	)
 	return i, err
 }
@@ -417,7 +456,7 @@ func (q *Queries) DeletePendingConfirmation(ctx context.Context, chatID string) 
 }
 
 const getAgent = `-- name: GetAgent :one
-SELECT id, name, project_id, hosting_region, status, last_edited, last_published, template, system_prompt, greeting_message, failure_message, model_type, asr, llm, tts, turn_detection, start_of_speech, end_of_speech, selective_attention_locking, filler_words, max_history, mcp_servers, skills, sub_agents FROM agents
+SELECT id, name, project_id, hosting_region, status, last_edited, last_published, template, system_prompt, greeting_message, failure_message, model_type, asr, llm, tts, turn_detection, start_of_speech, end_of_speech, selective_attention_locking, filler_words, max_history, mcp_servers, skills, sub_agents, clarification_rules FROM agents
 WHERE id = $1 LIMIT 1
 `
 
@@ -449,6 +488,7 @@ func (q *Queries) GetAgent(ctx context.Context, id string) (Agent, error) {
 		&i.McpServers,
 		&i.Skills,
 		&i.SubAgents,
+		&i.ClarificationRules,
 	)
 	return i, err
 }
@@ -471,7 +511,7 @@ func (q *Queries) GetConversationState(ctx context.Context, chatID string) (Conv
 }
 
 const getPendingConfirmation = `-- name: GetPendingConfirmation :one
-SELECT chat_id, tool_id, args, org_id, acting_user_uid, description, status, claimed_at, created_at, expires_at FROM pending_confirmations
+SELECT chat_id, tool_id, args, org_id, acting_user_uid, description, status, claimed_at, created_at, expires_at, missing_fields, collect_rounds, intent FROM pending_confirmations
 WHERE chat_id = $1
 `
 
@@ -489,6 +529,9 @@ func (q *Queries) GetPendingConfirmation(ctx context.Context, chatID string) (Pe
 		&i.ClaimedAt,
 		&i.CreatedAt,
 		&i.ExpiresAt,
+		&i.MissingFields,
+		&i.CollectRounds,
+		&i.Intent,
 	)
 	return i, err
 }
@@ -614,7 +657,7 @@ func (q *Queries) GetWaContact(ctx context.Context, chatID string) (WaContact, e
 }
 
 const listAgents = `-- name: ListAgents :many
-SELECT id, name, project_id, hosting_region, status, last_edited, last_published, template, system_prompt, greeting_message, failure_message, model_type, asr, llm, tts, turn_detection, start_of_speech, end_of_speech, selective_attention_locking, filler_words, max_history, mcp_servers, skills, sub_agents FROM agents
+SELECT id, name, project_id, hosting_region, status, last_edited, last_published, template, system_prompt, greeting_message, failure_message, model_type, asr, llm, tts, turn_detection, start_of_speech, end_of_speech, selective_attention_locking, filler_words, max_history, mcp_servers, skills, sub_agents, clarification_rules FROM agents
 ORDER BY name
 `
 
@@ -652,6 +695,7 @@ func (q *Queries) ListAgents(ctx context.Context) ([]Agent, error) {
 			&i.McpServers,
 			&i.Skills,
 			&i.SubAgents,
+			&i.ClarificationRules,
 		); err != nil {
 			return nil, err
 		}
@@ -746,7 +790,7 @@ func (q *Queries) ListPendingWaVoiceNotes(ctx context.Context, limit int32) ([]W
 }
 
 const listPublishedAgents = `-- name: ListPublishedAgents :many
-SELECT id, name, project_id, hosting_region, status, last_edited, last_published, template, system_prompt, greeting_message, failure_message, model_type, asr, llm, tts, turn_detection, start_of_speech, end_of_speech, selective_attention_locking, filler_words, max_history, mcp_servers, skills, sub_agents FROM agents
+SELECT id, name, project_id, hosting_region, status, last_edited, last_published, template, system_prompt, greeting_message, failure_message, model_type, asr, llm, tts, turn_detection, start_of_speech, end_of_speech, selective_attention_locking, filler_words, max_history, mcp_servers, skills, sub_agents, clarification_rules FROM agents
 WHERE status = 'published'
 ORDER BY name
 `
@@ -785,6 +829,7 @@ func (q *Queries) ListPublishedAgents(ctx context.Context) ([]Agent, error) {
 			&i.McpServers,
 			&i.Skills,
 			&i.SubAgents,
+			&i.ClarificationRules,
 		); err != nil {
 			return nil, err
 		}
@@ -1112,10 +1157,11 @@ SET name = $2, system_prompt = $3, greeting_message = $4, failure_message = $5,
     mcp_servers = $11, skills = $12, sub_agents = $13,
     turn_detection = $14, start_of_speech = $15, end_of_speech = $16,
     selective_attention_locking = $17, filler_words = $18,
+    clarification_rules = $19,
     last_published = CASE WHEN $10::text = 'published' AND status <> 'published' THEN NOW() ELSE last_published END,
     status = $10, last_edited = NOW()
 WHERE id = $1
-RETURNING id, name, project_id, hosting_region, status, last_edited, last_published, template, system_prompt, greeting_message, failure_message, model_type, asr, llm, tts, turn_detection, start_of_speech, end_of_speech, selective_attention_locking, filler_words, max_history, mcp_servers, skills, sub_agents
+RETURNING id, name, project_id, hosting_region, status, last_edited, last_published, template, system_prompt, greeting_message, failure_message, model_type, asr, llm, tts, turn_detection, start_of_speech, end_of_speech, selective_attention_locking, filler_words, max_history, mcp_servers, skills, sub_agents, clarification_rules
 `
 
 type UpdateAgentWorkflowParams struct {
@@ -1137,11 +1183,12 @@ type UpdateAgentWorkflowParams struct {
 	EndOfSpeech               bool   `json:"end_of_speech"`
 	SelectiveAttentionLocking bool   `json:"selective_attention_locking"`
 	FillerWords               bool   `json:"filler_words"`
+	ClarificationRules        []byte `json:"clarification_rules"`
 }
 
 // last_published is stamped only on the draft->published transition (D4);
 // the CASE reads the pre-update status, per UPDATE..SET semantics. The panel
-// now edits the full four-block config, so every operator-editable column is set.
+// now edits the full five-block config, so every operator-editable column is set.
 func (q *Queries) UpdateAgentWorkflow(ctx context.Context, arg UpdateAgentWorkflowParams) (Agent, error) {
 	row := q.db.QueryRow(ctx, updateAgentWorkflow,
 		arg.ID,
@@ -1162,6 +1209,7 @@ func (q *Queries) UpdateAgentWorkflow(ctx context.Context, arg UpdateAgentWorkfl
 		arg.EndOfSpeech,
 		arg.SelectiveAttentionLocking,
 		arg.FillerWords,
+		arg.ClarificationRules,
 	)
 	var i Agent
 	err := row.Scan(
@@ -1189,6 +1237,7 @@ func (q *Queries) UpdateAgentWorkflow(ctx context.Context, arg UpdateAgentWorkfl
 		&i.McpServers,
 		&i.Skills,
 		&i.SubAgents,
+		&i.ClarificationRules,
 	)
 	return i, err
 }
@@ -1264,13 +1313,14 @@ func (q *Queries) UpsertConversationState(ctx context.Context, arg UpsertConvers
 }
 
 const upsertPendingConfirmation = `-- name: UpsertPendingConfirmation :exec
-INSERT INTO pending_confirmations (chat_id, tool_id, args, org_id, acting_user_uid, description, status, claimed_at, created_at, expires_at)
-VALUES ($1, $2, $3, $4, $5, $6, 'pending', NULL, NOW(), $7)
+INSERT INTO pending_confirmations (chat_id, tool_id, args, org_id, acting_user_uid, description, status, claimed_at, created_at, expires_at, missing_fields, collect_rounds, intent)
+VALUES ($1, $2, $3, $4, $5, $6, 'pending', NULL, NOW(), $7, '[]'::jsonb, 0, '')
 ON CONFLICT (chat_id) DO UPDATE
 SET tool_id = EXCLUDED.tool_id, args = EXCLUDED.args, org_id = EXCLUDED.org_id,
     acting_user_uid = EXCLUDED.acting_user_uid, description = EXCLUDED.description,
     status = 'pending', claimed_at = NULL,
-    created_at = NOW(), expires_at = EXCLUDED.expires_at
+    created_at = NOW(), expires_at = EXCLUDED.expires_at,
+    missing_fields = '[]'::jsonb, collect_rounds = 0, intent = ''
 `
 
 type UpsertPendingConfirmationParams struct {
@@ -1292,6 +1342,50 @@ func (q *Queries) UpsertPendingConfirmation(ctx context.Context, arg UpsertPendi
 		arg.ActingUserUid,
 		arg.Description,
 		arg.ExpiresAt,
+	)
+	return err
+}
+
+const upsertCollecting = `-- name: UpsertCollecting :exec
+INSERT INTO pending_confirmations (chat_id, tool_id, args, org_id, acting_user_uid, description, status, claimed_at, created_at, expires_at, missing_fields, collect_rounds, intent)
+VALUES ($1, $2, $3, $4, $5, $6, 'collecting', NULL, NOW(), $7, $8, $9, $10)
+ON CONFLICT (chat_id) DO UPDATE
+SET tool_id = EXCLUDED.tool_id, args = EXCLUDED.args, org_id = EXCLUDED.org_id,
+    acting_user_uid = EXCLUDED.acting_user_uid, description = EXCLUDED.description,
+    status = 'collecting', claimed_at = NULL,
+    created_at = NOW(), expires_at = EXCLUDED.expires_at,
+    missing_fields = EXCLUDED.missing_fields, collect_rounds = EXCLUDED.collect_rounds,
+    intent = EXCLUDED.intent
+`
+
+type UpsertCollectingParams struct {
+	ChatID        string    `json:"chat_id"`
+	ToolID        string    `json:"tool_id"`
+	Args          []byte    `json:"args"`
+	OrgID         string    `json:"org_id"`
+	ActingUserUid string    `json:"acting_user_uid"`
+	Description   string    `json:"description"`
+	ExpiresAt     time.Time `json:"expires_at"`
+	MissingFields []byte    `json:"missing_fields"`
+	CollectRounds int32     `json:"collect_rounds"`
+	Intent        string    `json:"intent"`
+}
+
+// UpsertCollecting parks a tool call that is still missing required args
+// (F-1 fix). Mirrors UpsertPendingConfirmation's upsert shape exactly, but
+// with status='collecting' and the extra slot-filling columns populated.
+func (q *Queries) UpsertCollecting(ctx context.Context, arg UpsertCollectingParams) error {
+	_, err := q.db.Exec(ctx, upsertCollecting,
+		arg.ChatID,
+		arg.ToolID,
+		arg.Args,
+		arg.OrgID,
+		arg.ActingUserUid,
+		arg.Description,
+		arg.ExpiresAt,
+		arg.MissingFields,
+		arg.CollectRounds,
+		arg.Intent,
 	)
 	return err
 }

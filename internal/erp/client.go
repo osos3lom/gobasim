@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"sawt-go/internal/trace"
@@ -27,17 +28,29 @@ type Identity struct {
 	PhoneUnverified bool     `json:"phoneUnverified"`
 }
 
+type cachedIdentity struct {
+	identity  *Identity
+	createdAt time.Time
+}
+
 type Client struct {
 	baseURL string
 	secret  string
 	http    *http.Client
+
+	// In-memory cache for identity resolution (D-8)
+	cacheMu    sync.RWMutex
+	cacheTTL   time.Duration
+	phoneCache map[string]cachedIdentity
 }
 
 func NewClient(baseURL, secret string) *Client {
 	return &Client{
-		baseURL: strings.TrimSuffix(baseURL, "/"),
-		secret:  secret,
-		http:    &http.Client{Timeout: 15 * time.Second},
+		baseURL:    strings.TrimSuffix(baseURL, "/"),
+		secret:     secret,
+		http:       &http.Client{Timeout: 15 * time.Second},
+		cacheTTL:   5 * time.Minute,
+		phoneCache: make(map[string]cachedIdentity),
 	}
 }
 
@@ -144,6 +157,15 @@ func (c *Client) ResolveIdentity(ctx context.Context, phone string) (*Identity, 
 		return nil, fmt.Errorf("AGENT_GATEWAY_SECRET not set — identity resolution disabled")
 	}
 
+	c.cacheMu.RLock()
+	if cached, ok := c.phoneCache[phone]; ok {
+		if time.Since(cached.createdAt) < c.cacheTTL {
+			c.cacheMu.RUnlock()
+			return cached.identity, nil
+		}
+	}
+	c.cacheMu.RUnlock()
+
 	bodyMap := map[string]string{"phone": phone}
 	bodyBytes, err := json.Marshal(bodyMap)
 	if err != nil {
@@ -154,9 +176,15 @@ func (c *Client) ResolveIdentity(ctx context.Context, phone string) (*Identity, 
 	url := fmt.Sprintf("%s/api/agent/v1/identity/resolve", c.baseURL)
 	status, respBytes, err := c.doSignedPOST(ctx, url, bodyBytes, 10*time.Second)
 	if err != nil {
+		c.cacheMu.Lock()
+		delete(c.phoneCache, phone)
+		c.cacheMu.Unlock()
 		return nil, fmt.Errorf("identity resolve failed: %w", err)
 	}
 	if status != http.StatusOK {
+		c.cacheMu.Lock()
+		delete(c.phoneCache, phone)
+		c.cacheMu.Unlock()
 		return nil, fmt.Errorf("ERP returned HTTP %d: %s", status, string(respBytes))
 	}
 
@@ -171,14 +199,33 @@ func (c *Client) ResolveIdentity(ctx context.Context, phone string) (*Identity, 
 	}
 
 	if !responseStruct.Resolved {
+		c.cacheMu.Lock()
+		c.phoneCache[phone] = cachedIdentity{
+			identity:  nil,
+			createdAt: time.Now(),
+		}
+		c.cacheMu.Unlock()
 		return nil, nil // Unlinked
 	}
 
 	if responseStruct.Identity == nil {
+		c.cacheMu.Lock()
+		c.phoneCache[phone] = cachedIdentity{
+			identity:  nil,
+			createdAt: time.Now(),
+		}
+		c.cacheMu.Unlock()
 		return nil, nil
 	}
 
 	responseStruct.Identity.PhoneUnverified = responseStruct.PhoneUnverified
+
+	c.cacheMu.Lock()
+	c.phoneCache[phone] = cachedIdentity{
+		identity:  responseStruct.Identity,
+		createdAt: time.Now(),
+	}
+	c.cacheMu.Unlock()
 
 	return responseStruct.Identity, nil
 }

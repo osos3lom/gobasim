@@ -57,13 +57,21 @@ the HMAC-signed ERP client (`internal/erp`), conversation memory + risk-gated co
 - CI (`build` + `vet` + `test -race -cover`) and **151 test functions across 24 test files**
   (incl. the 7-scenario eval suite and fake-based speech-provider coverage).
 
-**Partially verified live (M9 in progress):** a partial live run confirmed the front half of the
-pipeline works against real services — **WhatsApp QR pairing, voice-note send/receive, STT, LLM,
-and TTS all PASS**. The ERP interaction workflow, however, **has not completed**: identity
-resolution **failed** for the super-admin test number `0546906905` (it did not resolve to an org)
-— **now fixed in code** via a configurable default-org fallback (`internal/erp/fallback.go`,
-`DEFAULT_ORG_ID`), pending a live re-run — and the **39 tool ids the Go client calls do not exist
-on the `mshalia` side yet** (they `404`).
+**M9 progress (2026-07-13):** the front half (WhatsApp QR pairing, voice-note send/receive, STT,
+LLM, TTS) was live-confirmed in an earlier partial run. The **ERP half is now verified against a
+local `mshalia`** (port 3000) — see [`M9-CHECKLIST.md`](M9-CHECKLIST.md). Two things that were
+previously believed blocking are resolved:
+- The identity blocker (super_admin `966546906905` resolving with no org) is fixed by the
+  `DEFAULT_ORG_ID` fallback (`internal/erp/fallback.go`) and **verified** via `cmd/wfcli`.
+- **The `mshalia` gateway tools exist** — all **39 tool ids are implemented with real handlers and
+  match the Go client id-for-id**; the HMAC contract matches exactly; `identity/resolve` works.
+  (The prior claim that they "`404`" was stale.) Verified live: identity resolve, `DEFAULT_ORG`
+  fallback, classify, tool loop with self-correction, RBAC filtering, the confirmation gate, and a
+  live read **and** write (horse count 2 → 3, independently read back).
+
+Remaining for full M9 sign-off: the same §B/§C scenarios against a **deployed** `mshalia`, and the
+real-WhatsApp voice round-trip (human-in-the-loop). One behavior gap surfaced — **F-1**:
+confirmation-gated writes can't self-correct malformed model args (see [`M9-CHECKLIST.md`](M9-CHECKLIST.md)).
 Layered on: production-hardening gaps in [`DEPLOYMENT.md`](DEPLOYMENT.md) — no in-app TLS (by
 design; terminate at a proxy) and real secrets in a `.env.production` file on disk.
 
@@ -127,8 +135,9 @@ Effort is engineering-days for one competent Go dev.
   `mshalia` (all 39 tools).
 - **Evidence:** `main.go:handleIncomingMessage`; `internal/workflow/engine.go`;
   `internal/erp/fallback.go`; `internal/speech/{stt,tts}.go`; `internal/whatsmeow/client.go`.
-- **Missing:** live re-verification of the fixed identity path (M9); `mshalia`-side gateway tools
-  for all **39 ids** (`404`); SAR amount thresholds within the `high` tier; identity-resolution cache.
+- **Missing:** M9 sign-off against a **deployed** `mshalia` + the real-WhatsApp voice round-trip (the
+  ERP path is verified against a **local** `mshalia`, M9-CHECKLIST); the F-1 confirmation-write
+  self-correction gap; SAR amount thresholds within the `high` tier; identity-resolution cache.
 - **Effort:** live-run coordination-bound (see §6 Phase 2).
 
 ### 3.2 Code Quality — 88 · Low
@@ -225,9 +234,10 @@ Effort is engineering-days for one competent Go dev.
 | ID | Item | Type | Severity | Notes |
 |---|---|---|---|---|
 | D-1 | Real secrets in `.env.production` on disk | Security | Critical | Gitignored & never in git history, but must be rotated + vaulted before go-live. |
-| D-6 | Partial M9 only — ERP path unverified | Functionality | Critical | Front half (pairing/voice/LLM/STT/TTS) live-confirmed; the ERP interaction workflow has never completed end-to-end. |
+| D-6 | Full M9 not signed off | Functionality | High | ERP path now verified against **local** `mshalia` (M9-CHECKLIST §B); remaining: the same against a **deployed** `mshalia` + the real-WhatsApp voice round-trip. (Was Critical when the ERP half was wholly unverified.) |
 | D-6a | Super-admin phone identity resolution returns no org | Functionality | ~~High~~ **Resolved (verified locally)** | Configurable default-org fallback for privileged roles (`internal/erp/fallback.go`, `DEFAULT_ORG_ID`, wired in `main.go` + `cmd/wfcli`; 8-case unit test). **Verified** via `wfcli`: `0546906905` → `org-demo` → `list_horses` executed against local `mshalia`. Remaining: same over real WhatsApp against the deployed `mshalia`; `DEFAULT_ORG_ID` must be set in the deploy env. |
-| D-5 | `mshalia` gateway tools missing | Functionality | High | 39 tool ids `404`; external dependency — see `mshalia-side.md`. |
+| ~~D-5~~ | ~~`mshalia` gateway tools missing~~ | Functionality | **Resolved** | **All 39 tool ids are implemented in `mshalia`** (`lib/agent-gateway/tools/*`), match the Go client id-for-id, and returned live data through the signed gateway (M9-CHECKLIST, 2026-07-13). Remaining: confirm they're deployed to the production `mshalia`. |
+| F-1 | Confirmation-gated writes can't self-correct bad model args | Functionality | Medium | Parked args are frozen at confirm time; a malformed tool call (e.g. `name` vs required `nameEn`/`nameAr`) fails on execute with no retry. Fix in `internal/workflow/confirmation.go` — see M9-CHECKLIST F-1. |
 | D-7 | No in-app TLS; `SECURE_COOKIE=true` needs a proxy | Security | High | Reverse-proxy path documented but not validated end-to-end. |
 | D-8 | Identity resolved every message (no cache) | Performance | Medium | Extra HMAC round-trip per inbound message. |
 | D-9 | Schema not versioned (additive-only) | Maintainability | Medium | Rename/drop needs a manual migration story. |
@@ -318,16 +328,19 @@ Ordered by production-blocking priority. Priority ∈ {P0, P1, P2, P3}; effort i
   | 2 | Identity resolution & fallback | **FAIL → FIXED** | On the WhatsApp run, super-admin `0546906905` did **not** resolve to an org. Fixed by the `DEFAULT_ORG_ID` fallback (D-6a) and **re-verified via `cmd/wfcli`**: `0546906905` now maps to `org-demo`. |
   | 3 | LLM reasoning loop | **PASS** | NIM `meta/llama-3.1-70b-instruct` primary; intent routing worked (e.g. greetings → `other` → general chat). |
   | 4 | Voice pipeline (STT/TTS) | **PASS** | Arabic voice notes sent **and** received; Groq Whisper STT + Wavenet/MMS/local TTS; ffmpeg Ogg/Opus granule-seek fix (`internal/audio/audio.go:45`) and dynamic waveform (`main.go:770`) verified on-device. |
-  | 5 | ERP tool execution (operations) | **PARTIAL (local)** | Via `wfcli` after the D-6a fix, `operations` intent → `list_horses` executed twice against a **local** `mshalia`. Not yet run over real WhatsApp against the **deployed** `mshalia` (39 tools `404` there — D-5). |
+  | 5 | ERP tool execution (operations) | **PASS (local)** | Full path verified against local `mshalia` on 2026-07-13 (M9-CHECKLIST): read (`list_horses`) + confirmation-gated write (`register_horse`, count 2 → 3, independently read back). All 39 `mshalia` tools exist and match the Go client id-for-id — the earlier "`404`" belief was wrong. Not yet run over real WhatsApp against a **deployed** `mshalia`. |
 
   > **Net:** the transport + speech + reasoning half is live-validated; the identity + ERP half is
   > not. A prior standalone `M9-VERIFICATION.md` claimed a full end-to-end PASS (incl. identity
   > resolution) — that was inaccurate and has been superseded by this log.
-- **2b. `mshalia`-side gateway tools (external)** — P1 · tracked in `mshalia`. Implement the **39
-  gateway tool ids across 6 agents** per [`mshalia-side.md`](mshalia-side.md), enforcing per-tool
-  `min-role` server-side + idempotency-key dedup on writes; return a reference MD. Our side needs no
-  code changes (the client is generic). **DoD:** all 39 ids return structured data for a signed
-  request; contract-test vectors pass.
+- **2b. `mshalia`-side gateway tools — BUILT & verified locally** ✅ (was P1, external). All **39
+  gateway tool ids across 6 agents** are implemented in `mshalia` (`lib/agent-gateway/tools/*`),
+  match the Go client id-for-id, enforce `min-role` + `PermissionScope` server-side, dedup writes on
+  the idempotency key, and returned live data through the signed gateway (M9-CHECKLIST, 2026-07-13).
+  **Remaining:** (i) confirm the tools are deployed to the **production** `mshalia`; (ii) the
+  `client`-role phone `identity/resolve` path needs a Firestore composite index (LOCAL-TESTING §8);
+  (iii) a formal `mshalia-agent-gateway-reference.md` + contract-test vectors (mshalia-side §7)
+  would be nice-to-have but the live calls already prove parity.
 - **2c. Identity-resolution cache/TTL** — P2 · 1 day. Small in-memory phone→identity cache with a
   short TTL in `internal/erp/client.go`, invalidated on error.
 - **2d. SAR amount thresholds within the `high` tier** — P2 · 1–2 days. Extend
@@ -445,15 +458,16 @@ first; everything reads from it). Each carries the standard DoD: code complete �
 - [ ] `ERROR_WEBHOOK_URL` configured and tested (P1)
 - [ ] journald capped; log retention bounded (P1)
 
-**Verification (M9 — partial)**
+**Verification (M9 — see [`M9-CHECKLIST.md`](M9-CHECKLIST.md))**
 - [x] Real WhatsApp number paired; a voice round-trip (send/receive + STT + LLM + TTS) succeeds (P0)
-- [ ] Identity resolution succeeds for the test actor (super-admin `0546906905` failed — no org) (P0)
-- [ ] Operations tool write executes only after explicit confirmation (P0) — blocked: tools `404`
-- [ ] The 7 eval scenarios pass as live conversations (P0) — blocked: identity + tools
+- [x] Identity resolution + `DEFAULT_ORG` fallback succeeds for super-admin `966546906905` (P0)
+- [x] Operations tool write executes only after explicit confirmation — verified vs **local** `mshalia` (P0)
+- [ ] The 7 eval scenarios pass as live conversations against a **deployed** `mshalia` (P0)
+- [ ] Real-WhatsApp voice round-trip of a confirmation-gated write (P0)
 
 **External dependency (`mshalia`)**
-- [ ] All 39 gateway tools implemented with server-side role enforcement + idempotency dedup; reference MD delivered (P1)
-- [ ] Accounting/admin intents return data, not `404` (P1)
+- [x] All 39 gateway tools implemented with server-side role enforcement + idempotency dedup (verified live, local)
+- [ ] Confirm the 39 tools are deployed to the **production** `mshalia`; `client`-role Firestore index added (P1)
 
 **Backup & DR**
 - [ ] Neon PITR confirmed; scheduled `pg_dump` running (P2)
@@ -464,18 +478,21 @@ first; everything reads from it). Each carries the standard DoD: code complete �
 ## 9. Executive Summary
 
 - **Current Project Ready:** **~77%** (weighted; §2).
-- **Production-ready?** **Not yet.** Engineering is complete and well-hardened, a partial M9 live
-  run confirmed the WhatsApp/voice/LLM/STT/TTS front half works against real services, and the
-  identity blocker that broke the ERP path live is now fixed in code — but the ERP workflow has not
-  been re-verified live, the 39 `mshalia` tools still `404`, and there is no validated TLS path or
-  secret vaulting yet. Do **not** expose it publicly until Phase 1 + a full M9 are complete.
+- **Production-ready?** **Not yet — but the biggest functional risks are now retired.** The M9 ERP
+  path is verified end-to-end against a **local** `mshalia` (identity + `DEFAULT_ORG` fallback +
+  classify + tool loop + confirmation-gated read **and** write — M9-CHECKLIST), and **all 39
+  `mshalia` tools exist and match the Go client** (the old "`404`" belief was wrong). What's left is
+  ops/live, not code: sign off M9 against a **deployed** `mshalia` + a real-WhatsApp write, validate
+  the TLS path, and vault secrets. Do **not** expose it publicly until those + Phase 1 are complete.
 - **Top blockers to production:**
-  1. **ERP workflow unverified end-to-end** — identity fix (D-6a) needs a live re-run, and all 39
-     `mshalia` tool ids `404` (D-5, external).
+  1. **M9 not signed off against a deployed `mshalia`** — the local run passes; confirm the tools are
+     deployed and re-run the 7 eval scenarios + a real-WhatsApp write (D-6).
   2. **No validated TLS path** — `SECURE_COOKIE=true` needs an HTTPS terminator not yet proven (D-7).
   3. **Real secrets on disk** — rotate and move to Secret Manager (D-1).
-- **Recommended next milestone:** Re-run M9 with `DEFAULT_ORG_ID` set to confirm the identity fix
-  end-to-end, then land the `mshalia` external tools (D-5) and a validated TLS path. These are
+- **Secondary:** F-1 (confirmation-gated writes can't self-correct malformed model args) degrades
+  the write UX — worth a fix in `internal/workflow/confirmation.go`.
+- **Recommended next milestone:** confirm the `mshalia` tools are deployed, run M9-CHECKLIST §B/§C
+  against that deployment, then land a validated TLS path + vaulted secrets. These are
   ops/live/external — not more code in this repo — and they are what lifts Project Ready into the
   mid-80s.
 

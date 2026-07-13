@@ -396,6 +396,103 @@ func (c SubAgents) Allows(agent string) bool {
 func (c SubAgents) Marshal() []byte { return mustMarshal(c) }
 
 // ---------------------------------------------------------------------------
+// Clarification rules (agents.clarification_rules) — JSON object
+//
+// Overrides the workflow engine's F-1 fix: before a tool call is parked or
+// executed, required args missing from the model's call are either
+// auto-derived (e.g. an English horse name transliterated from the Arabic
+// one) or asked of the user instead of silently failing. The tool's own
+// declared schema is always the source of truth for what's required; this
+// config is an override/extension layer on top of it, never a replacement.
+// ---------------------------------------------------------------------------
+
+type ClarificationRules struct {
+	// Enabled is a pointer so an absent "enabled" key in the JSON (the common
+	// case — most agents will never touch this) defaults to true rather than
+	// Go's zero value false, without needing a pre-seeded-default trick. Every
+	// other config in this file happens to want its zero value as the default;
+	// this is the one field that doesn't, so this is the one deliberate
+	// departure from the plain zero-value pattern above.
+	Enabled       *bool                       `json:"enabled"`
+	ToolOverrides []ToolClarificationOverride `json:"tool_overrides"`
+	DeriveRules   []DeriveRuleConfig          `json:"derive_rules"`
+}
+
+// ToolClarificationOverride disables the "ask if missing" behavior for one
+// specific tool id. Mirrors the Skill/MCPServer convention: a plain bool, and
+// membership in the list is itself the override signal — a tool absent from
+// this list uses the default (ask).
+type ToolClarificationOverride struct {
+	ToolID       string `json:"tool_id"`
+	AskIfMissing bool   `json:"ask_if_missing"`
+}
+
+// DeriveRuleConfig lets an operator add or redirect a "derive field X from
+// field Y" rule without a Go redeploy. Method is looked up against the
+// engine's known derive functions at runtime; an unrecognized Method is
+// ignored (the field is treated as not derivable), not an error — so this
+// config can never crash the tool loop, only fail to help it.
+type DeriveRuleConfig struct {
+	ToolID      string `json:"tool_id"`
+	Field       string `json:"field"`
+	SourceField string `json:"source_field"`
+	Method      string `json:"method"`
+}
+
+// EffectiveEnabled reports whether the clarification behavior is on for this
+// agent: true unless the operator explicitly set "enabled": false.
+func (c ClarificationRules) EffectiveEnabled() bool {
+	return c.Enabled == nil || *c.Enabled
+}
+
+// DefaultClarificationRules is the seed config for a freshly created agent —
+// an empty override layer, which behaves identically to a NULL/absent column.
+func DefaultClarificationRules() ClarificationRules {
+	return ClarificationRules{ToolOverrides: []ToolClarificationOverride{}, DeriveRules: []DeriveRuleConfig{}}
+}
+
+func ParseClarificationRules(raw []byte) (ClarificationRules, error) {
+	var c ClarificationRules
+	if err := unmarshalIfPresent(raw, &c); err != nil {
+		return ClarificationRules{}, fmt.Errorf("clarification_rules: %w", err)
+	}
+	if err := c.Validate(); err != nil {
+		return ClarificationRules{}, err
+	}
+	return c, nil
+}
+
+func (c *ClarificationRules) Validate() error {
+	cleanedOverrides := make([]ToolClarificationOverride, 0, len(c.ToolOverrides))
+	seenTools := make(map[string]bool, len(c.ToolOverrides))
+	for _, o := range c.ToolOverrides {
+		o.ToolID = strings.TrimSpace(o.ToolID)
+		if o.ToolID == "" || seenTools[o.ToolID] {
+			continue
+		}
+		seenTools[o.ToolID] = true
+		cleanedOverrides = append(cleanedOverrides, o)
+	}
+	c.ToolOverrides = cleanedOverrides
+
+	cleanedRules := make([]DeriveRuleConfig, 0, len(c.DeriveRules))
+	for _, r := range c.DeriveRules {
+		r.ToolID = strings.TrimSpace(r.ToolID)
+		r.Field = strings.TrimSpace(r.Field)
+		r.SourceField = strings.TrimSpace(r.SourceField)
+		r.Method = strings.TrimSpace(r.Method)
+		if r.ToolID == "" || r.Field == "" || r.SourceField == "" {
+			continue
+		}
+		cleanedRules = append(cleanedRules, r)
+	}
+	c.DeriveRules = cleanedRules
+	return nil
+}
+
+func (c ClarificationRules) Marshal() []byte { return mustMarshal(c) }
+
+// ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
 

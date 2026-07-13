@@ -28,6 +28,7 @@ func (f *confirmFakeQuerier) UpsertPendingConfirmation(ctx context.Context, arg 
 		OrgID:         arg.OrgID,
 		ActingUserUid: arg.ActingUserUid,
 		Description:   arg.Description,
+		Status:        "pending", // matches the real SQL's status='pending'
 		ExpiresAt:     arg.ExpiresAt,
 	}
 	f.hadPending = true

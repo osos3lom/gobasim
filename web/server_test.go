@@ -611,3 +611,103 @@ func TestGetLogs_RenderSuccess(t *testing.T) {
 		t.Errorf("expected body to contain logs title, got:\n%s", body)
 	}
 }
+
+func TestPostWhatsAppSettings_RequiresCSRF(t *testing.T) {
+	db := &mockDBTX{}
+	server, cfg := setupTestServer(t, db)
+
+	req := authedRequest(t, cfg, db, "POST", "/dashboard/whatsapp/settings", "agent_id=agent_test")
+	w := httptest.NewRecorder()
+	server.GetRouter().ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected status 403 (Forbidden) due to missing CSRF, got %d", w.Code)
+	}
+}
+
+func TestPostWhatsAppSettings_Success(t *testing.T) {
+	var execCalled bool
+	var capturedArgs []interface{}
+
+	db := &mockDBTX{
+		queryRowFunc: func(ctx context.Context, sql string, args ...interface{}) pgx.Row {
+			if strings.Contains(sql, "SELECT id, tts_model, model_ids, default_speed, bot_config, assistant_agent_id FROM settings") {
+				return &mockRow{
+					scanFunc: func(dest ...interface{}) error {
+						*dest[0].(*int32) = 1
+						*dest[1].(*string) = "tts"
+						*dest[2].(*[]byte) = []byte("{}")
+						*dest[3].(*float32) = 1.0
+						*dest[4].(*[]byte) = []byte("{}")
+						*dest[5].(**string) = nil
+						return nil
+					},
+				}
+			}
+			if strings.Contains(sql, "SELECT") && strings.Contains(sql, "FROM agents") && strings.Contains(sql, "WHERE id =") {
+				return &mockRow{
+					scanFunc: func(dest ...interface{}) error {
+						*dest[0].(*string) = "agent_test"
+						*dest[1].(*string) = "Agent Test"
+						*dest[4].(*string) = "published"
+						return nil
+					},
+				}
+			}
+			return &mockRow{}
+		},
+		execFunc: func(ctx context.Context, sql string, args ...interface{}) (pgconn.CommandTag, error) {
+			if strings.Contains(sql, "UPDATE settings") {
+				execCalled = true
+				capturedArgs = args
+			}
+			return pgconn.CommandTag{}, nil
+		},
+	}
+	server, cfg := setupTestServer(t, db)
+
+	// Fetch page to get CSRF token
+	getReq := authedRequest(t, cfg, db, "GET", "/dashboard/whatsapp", "")
+	getW := httptest.NewRecorder()
+	server.GetRouter().ServeHTTP(getW, getReq)
+	csrfCookies := getW.Result().Cookies()
+	var token string
+	if idx := strings.Index(getW.Body.String(), `name="csrf_token" value="`); idx != -1 {
+		start := idx + len(`name="csrf_token" value="`)
+		if end := strings.Index(getW.Body.String()[start:], `"`); end != -1 {
+			token = getW.Body.String()[start : start+end]
+		}
+	}
+
+	form := url.Values{}
+	form.Add("csrf_token", token)
+	form.Add("agent_id", "agent_test")
+	form.Add("prompt_override", "Custom prompt")
+	form.Add("auto_enable", "on")
+
+	req := authedRequest(t, cfg, db, "POST", "/dashboard/whatsapp/settings", form.Encode())
+	for _, c := range csrfCookies {
+		req.AddCookie(c)
+	}
+	w := httptest.NewRecorder()
+	server.GetRouter().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d. Body: %s", w.Code, w.Body.String())
+	}
+	if !execCalled {
+		t.Fatal("expected UpdateSettings to be called")
+	}
+	if !strings.Contains(string(capturedArgs[3].([]byte)), `"agent_id":"agent_test"`) {
+		t.Errorf("expected bot_config to contain agent_test, got %s", string(capturedArgs[3].([]byte)))
+	}
+}
+
+func TestResolveRole_EmptyWhenClientNil(t *testing.T) {
+	db := &mockDBTX{}
+	server, _ := setupTestServer(t, db)
+	role := server.resolveRole(context.Background(), "1234@s.whatsapp.net", nil)
+	if role != "" {
+		t.Errorf("expected role to be empty, got %q", role)
+	}
+}

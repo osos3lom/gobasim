@@ -1,0 +1,36 @@
+[Unit]
+Description=Sawt WhatsApp ERP Gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sawt
+Group=sawt
+WorkingDirectory=/opt/sawt
+ExecStart=/opt/sawt/sawt-gateway
+EnvironmentFile=/opt/sawt/.env
+Environment=GOMEMLIMIT=750MiB
+Environment=GOGC=50
+
+# --- resilience ---
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=0
+
+# --- least privilege / sandboxing ---
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+LockPersonality=true
+# writable paths the app actually needs (spool dir):
+ReadWritePaths=/opt/sawt/voice-spool
+
+[Install]
+WantedBy=multi-user.target
