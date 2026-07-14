@@ -209,7 +209,7 @@ VALUES ($1, $2, $3, $4, $5, NOW())
 ON CONFLICT (chat_id) DO UPDATE
 SET name = EXCLUDED.name, enabled = EXCLUDED.enabled, agent_id = EXCLUDED.agent_id,
     prompt_override = EXCLUDED.prompt_override, updated_at = NOW()
-RETURNING chat_id, name, enabled, agent_id, prompt_override, updated_at
+RETURNING chat_id, name, enabled, agent_id, prompt_override, updated_at, erp_uid, erp_display_name, erp_org_id, erp_role, erp_unresolved_reason, erp_resolved_at, erp_phone_override
 `
 
 type CreateOrUpdateWaContactParams struct {
@@ -236,6 +236,13 @@ func (q *Queries) CreateOrUpdateWaContact(ctx context.Context, arg CreateOrUpdat
 		&i.AgentID,
 		&i.PromptOverride,
 		&i.UpdatedAt,
+		&i.ErpUid,
+		&i.ErpDisplayName,
+		&i.ErpOrgID,
+		&i.ErpRole,
+		&i.ErpUnresolvedReason,
+		&i.ErpResolvedAt,
+		&i.ErpPhoneOverride,
 	)
 	return i, err
 }
@@ -638,7 +645,7 @@ func (q *Queries) GetUserByUsername(ctx context.Context, username string) (User,
 }
 
 const getWaContact = `-- name: GetWaContact :one
-SELECT chat_id, name, enabled, agent_id, prompt_override, updated_at FROM wa_contacts
+SELECT chat_id, name, enabled, agent_id, prompt_override, updated_at, erp_uid, erp_display_name, erp_org_id, erp_role, erp_unresolved_reason, erp_resolved_at, erp_phone_override FROM wa_contacts
 WHERE chat_id = $1 LIMIT 1
 `
 
@@ -652,6 +659,13 @@ func (q *Queries) GetWaContact(ctx context.Context, chatID string) (WaContact, e
 		&i.AgentID,
 		&i.PromptOverride,
 		&i.UpdatedAt,
+		&i.ErpUid,
+		&i.ErpDisplayName,
+		&i.ErpOrgID,
+		&i.ErpRole,
+		&i.ErpUnresolvedReason,
+		&i.ErpResolvedAt,
+		&i.ErpPhoneOverride,
 	)
 	return i, err
 }
@@ -887,11 +901,13 @@ func (q *Queries) ListRecentWaActivity(ctx context.Context, limit int32) ([]WaAc
 }
 
 const listWaChatsSummary = `-- name: ListWaChatsSummary :many
-SELECT chat_id, last_message, last_direction, last_sender, last_message_at, contact_name, contact_enabled, contact_agent_id FROM (
+SELECT chat_id, last_message, last_direction, last_sender, last_message_at, contact_name, contact_enabled, contact_agent_id, contact_erp_display_name, contact_erp_org_id, contact_erp_role, contact_erp_unresolved_reason FROM (
     SELECT DISTINCT ON (m.chat_id)
         m.chat_id, m.content AS last_message, m.direction AS last_direction,
         m.sender AS last_sender, m.created_at AS last_message_at,
-        c.name AS contact_name, c.enabled AS contact_enabled, c.agent_id AS contact_agent_id
+        c.name AS contact_name, c.enabled AS contact_enabled, c.agent_id AS contact_agent_id,
+        c.erp_display_name AS contact_erp_display_name, c.erp_org_id AS contact_erp_org_id,
+        c.erp_role AS contact_erp_role, c.erp_unresolved_reason AS contact_erp_unresolved_reason
     FROM wa_messages m
     LEFT JOIN wa_contacts c ON c.chat_id = m.chat_id
     ORDER BY m.chat_id, m.created_at DESC, m.id DESC
@@ -900,14 +916,18 @@ ORDER BY last_message_at DESC
 `
 
 type ListWaChatsSummaryRow struct {
-	ChatID         string      `json:"chat_id"`
-	LastMessage    string      `json:"last_message"`
-	LastDirection  string      `json:"last_direction"`
-	LastSender     string      `json:"last_sender"`
-	LastMessageAt  time.Time   `json:"last_message_at"`
-	ContactName    *string     `json:"contact_name"`
-	ContactEnabled pgtype.Bool `json:"contact_enabled"`
-	ContactAgentID *string     `json:"contact_agent_id"`
+	ChatID                     string      `json:"chat_id"`
+	LastMessage                string      `json:"last_message"`
+	LastDirection              string      `json:"last_direction"`
+	LastSender                 string      `json:"last_sender"`
+	LastMessageAt              time.Time   `json:"last_message_at"`
+	ContactName                *string     `json:"contact_name"`
+	ContactEnabled             pgtype.Bool `json:"contact_enabled"`
+	ContactAgentID             *string     `json:"contact_agent_id"`
+	ContactErpDisplayName      *string     `json:"contact_erp_display_name"`
+	ContactErpOrgID            *string     `json:"contact_erp_org_id"`
+	ContactErpRole             *string     `json:"contact_erp_role"`
+	ContactErpUnresolvedReason *string     `json:"contact_erp_unresolved_reason"`
 }
 
 func (q *Queries) ListWaChatsSummary(ctx context.Context) ([]ListWaChatsSummaryRow, error) {
@@ -928,6 +948,10 @@ func (q *Queries) ListWaChatsSummary(ctx context.Context) ([]ListWaChatsSummaryR
 			&i.ContactName,
 			&i.ContactEnabled,
 			&i.ContactAgentID,
+			&i.ContactErpDisplayName,
+			&i.ContactErpOrgID,
+			&i.ContactErpRole,
+			&i.ContactErpUnresolvedReason,
 		); err != nil {
 			return nil, err
 		}
@@ -940,7 +964,7 @@ func (q *Queries) ListWaChatsSummary(ctx context.Context) ([]ListWaChatsSummaryR
 }
 
 const listWaContacts = `-- name: ListWaContacts :many
-SELECT chat_id, name, enabled, agent_id, prompt_override, updated_at FROM wa_contacts
+SELECT chat_id, name, enabled, agent_id, prompt_override, updated_at, erp_uid, erp_display_name, erp_org_id, erp_role, erp_unresolved_reason, erp_resolved_at, erp_phone_override FROM wa_contacts
 ORDER BY updated_at DESC
 `
 
@@ -960,6 +984,13 @@ func (q *Queries) ListWaContacts(ctx context.Context) ([]WaContact, error) {
 			&i.AgentID,
 			&i.PromptOverride,
 			&i.UpdatedAt,
+			&i.ErpUid,
+			&i.ErpDisplayName,
+			&i.ErpOrgID,
+			&i.ErpRole,
+			&i.ErpUnresolvedReason,
+			&i.ErpResolvedAt,
+			&i.ErpPhoneOverride,
 		); err != nil {
 			return nil, err
 		}
@@ -969,6 +1000,87 @@ func (q *Queries) ListWaContacts(ctx context.Context) ([]WaContact, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateWaContactErpLink = `-- name: UpdateWaContactErpLink :one
+INSERT INTO wa_contacts (chat_id, erp_uid, erp_display_name, erp_org_id, erp_role, erp_unresolved_reason, erp_resolved_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+ON CONFLICT (chat_id) DO UPDATE
+SET erp_uid = EXCLUDED.erp_uid, erp_display_name = EXCLUDED.erp_display_name,
+    erp_org_id = EXCLUDED.erp_org_id, erp_role = EXCLUDED.erp_role,
+    erp_unresolved_reason = EXCLUDED.erp_unresolved_reason, erp_resolved_at = NOW()
+RETURNING chat_id, name, enabled, agent_id, prompt_override, updated_at, erp_uid, erp_display_name, erp_org_id, erp_role, erp_unresolved_reason, erp_resolved_at, erp_phone_override
+`
+
+type UpdateWaContactErpLinkParams struct {
+	ChatID              string  `json:"chat_id"`
+	ErpUid              *string `json:"erp_uid"`
+	ErpDisplayName      *string `json:"erp_display_name"`
+	ErpOrgID            *string `json:"erp_org_id"`
+	ErpRole             *string `json:"erp_role"`
+	ErpUnresolvedReason *string `json:"erp_unresolved_reason"`
+}
+
+func (q *Queries) UpdateWaContactErpLink(ctx context.Context, arg UpdateWaContactErpLinkParams) (WaContact, error) {
+	row := q.db.QueryRow(ctx, updateWaContactErpLink,
+		arg.ChatID,
+		arg.ErpUid,
+		arg.ErpDisplayName,
+		arg.ErpOrgID,
+		arg.ErpRole,
+		arg.ErpUnresolvedReason,
+	)
+	var i WaContact
+	err := row.Scan(
+		&i.ChatID,
+		&i.Name,
+		&i.Enabled,
+		&i.AgentID,
+		&i.PromptOverride,
+		&i.UpdatedAt,
+		&i.ErpUid,
+		&i.ErpDisplayName,
+		&i.ErpOrgID,
+		&i.ErpRole,
+		&i.ErpUnresolvedReason,
+		&i.ErpResolvedAt,
+		&i.ErpPhoneOverride,
+	)
+	return i, err
+}
+
+const updateWaContactErpOverride = `-- name: UpdateWaContactErpOverride :one
+INSERT INTO wa_contacts (chat_id, erp_phone_override, updated_at)
+VALUES ($1, $2, NOW())
+ON CONFLICT (chat_id) DO UPDATE
+SET erp_phone_override = EXCLUDED.erp_phone_override, updated_at = NOW()
+RETURNING chat_id, name, enabled, agent_id, prompt_override, updated_at, erp_uid, erp_display_name, erp_org_id, erp_role, erp_unresolved_reason, erp_resolved_at, erp_phone_override
+`
+
+type UpdateWaContactErpOverrideParams struct {
+	ChatID           string  `json:"chat_id"`
+	ErpPhoneOverride *string `json:"erp_phone_override"`
+}
+
+func (q *Queries) UpdateWaContactErpOverride(ctx context.Context, arg UpdateWaContactErpOverrideParams) (WaContact, error) {
+	row := q.db.QueryRow(ctx, updateWaContactErpOverride, arg.ChatID, arg.ErpPhoneOverride)
+	var i WaContact
+	err := row.Scan(
+		&i.ChatID,
+		&i.Name,
+		&i.Enabled,
+		&i.AgentID,
+		&i.PromptOverride,
+		&i.UpdatedAt,
+		&i.ErpUid,
+		&i.ErpDisplayName,
+		&i.ErpOrgID,
+		&i.ErpRole,
+		&i.ErpUnresolvedReason,
+		&i.ErpResolvedAt,
+		&i.ErpPhoneOverride,
+	)
+	return i, err
 }
 
 const listWaMessagesByChat = `-- name: ListWaMessagesByChat :many
@@ -1108,6 +1220,173 @@ DELETE FROM tool_executions WHERE ts < $1
 func (q *Queries) PurgeToolExecutionsBefore(ctx context.Context, ts time.Time) error {
 	_, err := q.db.Exec(ctx, purgeToolExecutionsBefore, ts)
 	return err
+}
+
+const upsertPromptModule = `-- name: UpsertPromptModule :exec
+INSERT INTO prompt_modules (id, name, type, status, owner_team, updated_at)
+VALUES ($1, $2, $3, $4, $5, NOW())
+ON CONFLICT (id) DO UPDATE
+SET name = EXCLUDED.name, type = EXCLUDED.type, status = EXCLUDED.status,
+    owner_team = EXCLUDED.owner_team, updated_at = NOW()
+`
+
+type UpsertPromptModuleParams struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Type      string `json:"type"`
+	Status    string `json:"status"`
+	OwnerTeam string `json:"owner_team"`
+}
+
+func (q *Queries) UpsertPromptModule(ctx context.Context, arg UpsertPromptModuleParams) error {
+	_, err := q.db.Exec(ctx, upsertPromptModule,
+		arg.ID,
+		arg.Name,
+		arg.Type,
+		arg.Status,
+		arg.OwnerTeam,
+	)
+	return err
+}
+
+const upsertPromptModuleVersion = `-- name: UpsertPromptModuleVersion :exec
+INSERT INTO prompt_module_versions (id, module_id, version, body, hash, changelog)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (module_id, version) DO UPDATE
+SET body = EXCLUDED.body, hash = EXCLUDED.hash, changelog = EXCLUDED.changelog
+`
+
+type UpsertPromptModuleVersionParams struct {
+	ID        string `json:"id"`
+	ModuleID  string `json:"module_id"`
+	Version   int32  `json:"version"`
+	Body      string `json:"body"`
+	Hash      string `json:"hash"`
+	Changelog string `json:"changelog"`
+}
+
+func (q *Queries) UpsertPromptModuleVersion(ctx context.Context, arg UpsertPromptModuleVersionParams) error {
+	_, err := q.db.Exec(ctx, upsertPromptModuleVersion,
+		arg.ID,
+		arg.ModuleID,
+		arg.Version,
+		arg.Body,
+		arg.Hash,
+		arg.Changelog,
+	)
+	return err
+}
+
+const upsertPromptStack = `-- name: UpsertPromptStack :exec
+INSERT INTO prompt_stacks (id, agent_id, name, status, updated_at)
+VALUES ($1, $2, $3, $4, NOW())
+ON CONFLICT (id) DO UPDATE
+SET agent_id = EXCLUDED.agent_id, name = EXCLUDED.name, status = EXCLUDED.status, updated_at = NOW()
+`
+
+type UpsertPromptStackParams struct {
+	ID      string `json:"id"`
+	AgentID string `json:"agent_id"`
+	Name    string `json:"name"`
+	Status  string `json:"status"`
+}
+
+func (q *Queries) UpsertPromptStack(ctx context.Context, arg UpsertPromptStackParams) error {
+	_, err := q.db.Exec(ctx, upsertPromptStack,
+		arg.ID,
+		arg.AgentID,
+		arg.Name,
+		arg.Status,
+	)
+	return err
+}
+
+const upsertPromptStackModule = `-- name: UpsertPromptStackModule :exec
+INSERT INTO prompt_stack_modules (stack_id, module_version_id, order_index, condition_expr)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (stack_id, module_version_id) DO UPDATE
+SET order_index = EXCLUDED.order_index, condition_expr = EXCLUDED.condition_expr
+`
+
+type UpsertPromptStackModuleParams struct {
+	StackID         string `json:"stack_id"`
+	ModuleVersionID string `json:"module_version_id"`
+	OrderIndex      int32  `json:"order_index"`
+	ConditionExpr   string `json:"condition_expr"`
+}
+
+func (q *Queries) UpsertPromptStackModule(ctx context.Context, arg UpsertPromptStackModuleParams) error {
+	_, err := q.db.Exec(ctx, upsertPromptStackModule,
+		arg.StackID,
+		arg.ModuleVersionID,
+		arg.OrderIndex,
+		arg.ConditionExpr,
+	)
+	return err
+}
+
+const listPromptStackModulesByAgent = `-- name: ListPromptStackModulesByAgent :many
+SELECT
+    ps.id AS stack_id,
+    ps.name AS stack_name,
+    pm.id AS module_id,
+    pm.name AS module_name,
+    pm.type AS module_type,
+    pmv.id AS module_version_id,
+    pmv.version AS module_version,
+    pmv.body AS body,
+    pmv.hash AS hash,
+    psm.order_index AS order_index
+FROM prompt_stacks ps
+JOIN prompt_stack_modules psm ON psm.stack_id = ps.id
+JOIN prompt_module_versions pmv ON pmv.id = psm.module_version_id
+JOIN prompt_modules pm ON pm.id = pmv.module_id
+WHERE ps.agent_id = $1 AND ps.status = 'active' AND pm.status = 'active'
+ORDER BY psm.order_index ASC, pm.name ASC
+`
+
+type ListPromptStackModulesByAgentRow struct {
+	StackID         string `json:"stack_id"`
+	StackName       string `json:"stack_name"`
+	ModuleID        string `json:"module_id"`
+	ModuleName      string `json:"module_name"`
+	ModuleType      string `json:"module_type"`
+	ModuleVersionID string `json:"module_version_id"`
+	ModuleVersion   int32  `json:"module_version"`
+	Body            string `json:"body"`
+	Hash            string `json:"hash"`
+	OrderIndex      int32  `json:"order_index"`
+}
+
+func (q *Queries) ListPromptStackModulesByAgent(ctx context.Context, agentID string) ([]ListPromptStackModulesByAgentRow, error) {
+	rows, err := q.db.Query(ctx, listPromptStackModulesByAgent, agentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPromptStackModulesByAgentRow{}
+	for rows.Next() {
+		var i ListPromptStackModulesByAgentRow
+		if err := rows.Scan(
+			&i.StackID,
+			&i.StackName,
+			&i.ModuleID,
+			&i.ModuleName,
+			&i.ModuleType,
+			&i.ModuleVersionID,
+			&i.ModuleVersion,
+			&i.Body,
+			&i.Hash,
+			&i.OrderIndex,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const purgeTtsHistoryBefore = `-- name: PurgeTtsHistoryBefore :exec
@@ -1271,7 +1550,7 @@ const updateWaContactSettings = `-- name: UpdateWaContactSettings :one
 UPDATE wa_contacts
 SET enabled = $2, agent_id = $3, updated_at = NOW()
 WHERE chat_id = $1
-RETURNING chat_id, name, enabled, agent_id, prompt_override, updated_at
+RETURNING chat_id, name, enabled, agent_id, prompt_override, updated_at, erp_uid, erp_display_name, erp_org_id, erp_role, erp_unresolved_reason, erp_resolved_at, erp_phone_override
 `
 
 type UpdateWaContactSettingsParams struct {
@@ -1290,6 +1569,13 @@ func (q *Queries) UpdateWaContactSettings(ctx context.Context, arg UpdateWaConta
 		&i.AgentID,
 		&i.PromptOverride,
 		&i.UpdatedAt,
+		&i.ErpUid,
+		&i.ErpDisplayName,
+		&i.ErpOrgID,
+		&i.ErpRole,
+		&i.ErpUnresolvedReason,
+		&i.ErpResolvedAt,
+		&i.ErpPhoneOverride,
 	)
 	return i, err
 }

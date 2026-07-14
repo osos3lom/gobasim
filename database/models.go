@@ -148,12 +148,19 @@ type WaActivity struct {
 }
 
 type WaContact struct {
-	ChatID         string    `json:"chat_id"`
-	Name           string    `json:"name"`
-	Enabled        bool      `json:"enabled"`
-	AgentID        *string   `json:"agent_id"`
-	PromptOverride *string   `json:"prompt_override"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ChatID              string     `json:"chat_id"`
+	Name                string     `json:"name"`
+	Enabled             bool       `json:"enabled"`
+	AgentID             *string    `json:"agent_id"`
+	PromptOverride      *string    `json:"prompt_override"`
+	UpdatedAt           time.Time  `json:"updated_at"`
+	ErpUid              *string    `json:"erp_uid"`
+	ErpDisplayName      *string    `json:"erp_display_name"`
+	ErpOrgID            *string    `json:"erp_org_id"`
+	ErpRole             *string    `json:"erp_role"`
+	ErpUnresolvedReason *string    `json:"erp_unresolved_reason"`
+	ErpResolvedAt       *time.Time `json:"erp_resolved_at"`
+	ErpPhoneOverride    *string    `json:"erp_phone_override"`
 }
 
 type WaMessage struct {

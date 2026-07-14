@@ -72,6 +72,51 @@ ALTER TABLE agents ADD COLUMN IF NOT EXISTS
 -- existed. An empty object is a no-op override layer (see agentcfg.ParseClarificationRules).
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS clarification_rules JSONB NOT NULL DEFAULT '{}'::jsonb;
 
+-- PromptOps foundation: prompts become versioned modules composed into a stack.
+-- Phase 1 keeps agents.system_prompt as the backwards-compatible override, while
+-- these tables provide the first modular prompt source for compiled contexts.
+CREATE TABLE IF NOT EXISTS prompt_modules (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    type TEXT NOT NULL, -- system | domain | agent | task | tool | guardrail | localization | output
+    status TEXT NOT NULL DEFAULT 'active',
+    owner_team TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS prompt_module_versions (
+    id TEXT PRIMARY KEY,
+    module_id TEXT NOT NULL REFERENCES prompt_modules(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL,
+    body TEXT NOT NULL,
+    hash TEXT NOT NULL,
+    changelog TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (module_id, version)
+);
+
+CREATE TABLE IF NOT EXISTS prompt_stacks (
+    id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (agent_id, status)
+);
+
+CREATE TABLE IF NOT EXISTS prompt_stack_modules (
+    stack_id TEXT NOT NULL REFERENCES prompt_stacks(id) ON DELETE CASCADE,
+    module_version_id TEXT NOT NULL REFERENCES prompt_module_versions(id) ON DELETE CASCADE,
+    order_index INTEGER NOT NULL,
+    condition_expr TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (stack_id, module_version_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_prompt_stacks_agent ON prompt_stacks (agent_id, status);
+CREATE INDEX IF NOT EXISTS idx_prompt_stack_modules_order ON prompt_stack_modules (stack_id, order_index);
+
 CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
     username VARCHAR(100) UNIQUE NOT NULL,
@@ -91,7 +136,19 @@ CREATE TABLE IF NOT EXISTS wa_contacts (
     enabled BOOLEAN NOT NULL DEFAULT FALSE,
     agent_id TEXT,
     prompt_override TEXT,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- Persisted link to the ERP identity resolved for this contact's phone
+    -- number (see internal/erp.Client.ResolveIdentity). erp_phone_override
+    -- lets an operator resolve against a different phone than the one
+    -- derived from chat_id, for contacts whose WhatsApp number doesn't match
+    -- what's registered in the ERP.
+    erp_uid TEXT,
+    erp_display_name TEXT,
+    erp_org_id TEXT,
+    erp_role TEXT,
+    erp_unresolved_reason TEXT,
+    erp_resolved_at TIMESTAMPTZ,
+    erp_phone_override TEXT
 );
 
 CREATE TABLE IF NOT EXISTS wa_activity (

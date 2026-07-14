@@ -387,7 +387,7 @@ func TestPostToggleWaContact_PreservesOtherFields(t *testing.T) {
 	db := &mockDBTX{
 		queryRowFunc: func(ctx context.Context, sql string, args ...interface{}) pgx.Row {
 			switch {
-			case strings.Contains(sql, "SELECT chat_id, name, enabled, agent_id, prompt_override, updated_at FROM wa_contacts"):
+			case strings.Contains(sql, "FROM wa_contacts") && strings.Contains(sql, "WHERE chat_id = $1 LIMIT 1"):
 				// GetWaContact: return an existing contact with AgentID/PromptOverride set and Enabled=true.
 				return &mockRow{
 					scanFunc: func(dest ...interface{}) error {
@@ -464,7 +464,7 @@ func TestPostAssignWaContactAgent_RejectsUnpublishedAgent(t *testing.T) {
 	db := &mockDBTX{
 		queryRowFunc: func(ctx context.Context, sql string, args ...interface{}) pgx.Row {
 			switch {
-			case strings.Contains(sql, "SELECT chat_id, name, enabled, agent_id, prompt_override, updated_at FROM wa_contacts"):
+			case strings.Contains(sql, "FROM wa_contacts") && strings.Contains(sql, "WHERE chat_id = $1 LIMIT 1"):
 				return &mockRow{
 					scanFunc: func(dest ...interface{}) error {
 						*dest[0].(*string) = "1234@s.whatsapp.net"
@@ -703,11 +703,3 @@ func TestPostWhatsAppSettings_Success(t *testing.T) {
 	}
 }
 
-func TestResolveRole_EmptyWhenClientNil(t *testing.T) {
-	db := &mockDBTX{}
-	server, _ := setupTestServer(t, db)
-	role := server.resolveRole(context.Background(), "1234@s.whatsapp.net", nil)
-	if role != "" {
-		t.Errorf("expected role to be empty, got %q", role)
-	}
-}

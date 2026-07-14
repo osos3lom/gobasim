@@ -667,12 +667,15 @@ func handleIncomingMessage(
 		Status:    "delivered",
 	})
 
-	// 2. Resolve Actor Identity from Phone JID
+	// 2. Resolve Actor Identity from Phone JID (or the operator-set
+	// erp_phone_override, when the WhatsApp number doesn't match what's
+	// registered in the ERP), persisting the outcome onto wa_contacts.
 	var identity *erp.Identity
-	phone := strings.Split(evt.Info.Chat.String(), "@")[0]
-	identity, err = erpClient.ResolveIdentity(ctx, phone)
+	linkResult, err := erp.ResolveAndPersistContactIdentity(ctx, erpClient, queries, evt.Info.Chat.String(), contact.ErpPhoneOverride)
 	if err != nil {
 		monitor.ReportError(ctx, "identity", err)
+	} else {
+		identity = linkResult.Identity
 	}
 	// Give a resolved-but-orgless privileged actor (super_admin/admin/owner) a
 	// working org so the ERP tool loop doesn't bail as "unlinked". Closes the

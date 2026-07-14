@@ -307,6 +307,15 @@
         <div>
             <div class="font-semibold text-white text-sm">{{.Name}}</div>
             <div class="text-xs text-gray-400 mt-0.5">{{.ChatID}}</div>
+            {{if .ErpUid}}
+            <div class="text-[10px] text-emerald-400 mt-1">
+                🔗 {{.ErpDisplayName}}{{if .ErpRole}} · {{.ErpRole}}{{end}}{{if .ErpOrgID}} · org {{.ErpOrgID}}{{end}}
+            </div>
+            {{else}}
+            <div class="text-[10px] text-amber-400 mt-1">
+                ⚠ Unlinked — {{.ErpUnresolvedLabel}}
+            </div>
+            {{end}}
             {{if .PromptOverride}}
             <div class="text-[10px] bg-slate-900 text-indigo-400 px-1.5 py-0.5 rounded border border-indigo-950 mt-1 inline-block">Prompt Override Set</div>
             {{end}}
@@ -363,6 +372,27 @@
                 Save
             </button>
         </div>
+
+        <!-- ERP identity: override + on-demand resolve. Buttons are
+             type="button" (not submit) so they fire their own hx-post
+             instead of the agent-assignment form's. -->
+        <div class="pt-3 border-t border-indigo-950/30">
+            <label for="wa-erp-override-{{.ChatID}}" class="block text-xs font-semibold text-gray-300 mb-1">ERP phone override</label>
+            <p class="text-[10px] text-gray-500 mb-1.5">Set this if the contact's WhatsApp number differs from their ERP-registered phone.</p>
+            <div class="flex gap-2">
+                <input type="tel" id="wa-erp-override-{{.ChatID}}" name="erp_phone_override" placeholder="e.g. 971501234567"
+                    value="{{if .ErpPhoneOverride}}{{.ErpPhoneOverride}}{{end}}"
+                    class="flex-1 bg-slate-950/60 border border-indigo-950 focus:border-indigo-500 rounded-lg px-3 py-2 text-xs text-white outline-none transition duration-200">
+                <button type="button" hx-post="/dashboard/whatsapp/contacts/{{.ChatID}}/erp-override" hx-target="closest .wa-contact-row" hx-swap="outerHTML" hx-disabled-elt="this"
+                    class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-gray-200 text-[10px] font-semibold rounded-lg border border-indigo-950 shrink-0 transition duration-200">
+                    Save
+                </button>
+                <button type="button" hx-post="/dashboard/whatsapp/contacts/{{.ChatID}}/resolve-identity" hx-target="closest .wa-contact-row" hx-swap="outerHTML" hx-disabled-elt="this"
+                    class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-gray-200 text-[10px] font-semibold rounded-lg border border-indigo-950 shrink-0 transition duration-200">
+                    Resolve now
+                </button>
+            </div>
+        </div>
     </form>
 </div>
 {{end}}
@@ -401,8 +431,12 @@
         </div>
         <span class="text-[10px] text-gray-500 shrink-0">{{.LastMessageAt.Format "15:04"}}</span>
     </div>
-    {{if .Role}}
-    <div class="text-[10px] text-indigo-400 font-semibold uppercase tracking-wider mt-0.5">{{.Role}}</div>
+    {{if .ContactErpDisplayName}}
+    <div class="text-[10px] text-indigo-400 font-semibold uppercase tracking-wider mt-0.5">
+        {{.ContactErpDisplayName}}{{if .ContactErpRole}} · {{.ContactErpRole}}{{end}}
+    </div>
+    {{else if .ContactErpRole}}
+    <div class="text-[10px] text-indigo-400 font-semibold uppercase tracking-wider mt-0.5">{{.ContactErpRole}}</div>
     {{end}}
     <div class="text-xs text-gray-400 truncate mt-0.5">
         {{if eq .LastSender "operator"}}You: {{else if eq .LastSender "bot"}}Bot: {{end}}{{.LastMessage}}
@@ -434,13 +468,13 @@
         <div class="text-xs text-gray-500 font-semibold tracking-wider uppercase">Selected Workspace JID</div>
         <div class="text-sm font-bold text-white truncate">{{.WaContact.ChatID}}</div>
         
-        {{if .Role}}
+        {{if .WaContact.ErpUid}}
         <div class="mt-2 inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-indigo-950 border border-indigo-900 text-indigo-400 text-xs font-bold uppercase tracking-wider">
-            👤 Resolved Role: {{.Role}}
+            👤 {{.WaContact.ErpDisplayName}}{{if .WaContact.ErpRole}} · {{.WaContact.ErpRole}}{{end}}{{if .WaContact.ErpOrgID}} · org {{.WaContact.ErpOrgID}}{{end}}
         </div>
         {{else}}
         <div class="mt-2 inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-gray-400 text-xs font-bold uppercase tracking-wider">
-            👤 Resolved Role: Unresolved
+            👤 Unlinked — {{.ErpUnresolvedLabel}}
         </div>
         {{end}}
     </div>

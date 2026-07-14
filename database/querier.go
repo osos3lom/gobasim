@@ -66,6 +66,13 @@ type Querier interface {
 	// now edits the full five-block config, so every operator-editable column is set.
 	UpdateAgentWorkflow(ctx context.Context, arg UpdateAgentWorkflowParams) (Agent, error)
 	UpdateSettings(ctx context.Context, arg UpdateSettingsParams) error
+	// UpdateWaContactErpLink persists the outcome of resolving a contact's
+	// phone against the ERP (see internal/erp.Client.ResolveIdentity).
+	UpdateWaContactErpLink(ctx context.Context, arg UpdateWaContactErpLinkParams) (WaContact, error)
+	// UpdateWaContactErpOverride sets (or clears) the phone number an
+	// operator wants used for ERP identity resolution instead of the one
+	// derived from the WhatsApp chat_id.
+	UpdateWaContactErpOverride(ctx context.Context, arg UpdateWaContactErpOverrideParams) (WaContact, error)
 	UpdateWaContactSettings(ctx context.Context, arg UpdateWaContactSettingsParams) (WaContact, error)
 	// UpsertCollecting parks a tool call that is still missing required args
 	// (F-1 fix). Mirrors UpsertPendingConfirmation's upsert shape exactly, but

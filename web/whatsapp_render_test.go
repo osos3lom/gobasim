@@ -17,12 +17,18 @@ func TestWhatsAppRender_ThreadPilot(t *testing.T) {
 		{ID: "agent_ops", Name: "Operations Brain", Status: "published"},
 	}
 
+	erpUID := "uid_123"
+	displayName := "Layla Hassan"
+	role := "manager"
 	contact := database.WaContact{
 		ChatID:         "1234@s.whatsapp.net",
 		Name:           "Layla",
 		Enabled:        true,
 		AgentID:        &agents[0].ID,
 		PromptOverride: nil,
+		ErpUid:         &erpUID,
+		ErpDisplayName: &displayName,
+		ErpRole:        &role,
 	}
 
 	messages := []database.WaMessage{
@@ -37,7 +43,6 @@ func TestWhatsAppRender_ThreadPilot(t *testing.T) {
 		"WaContact":       contact,
 		"Messages":        messages,
 		"PublishedAgents": agents,
-		"Role":            "manager",
 		"WindowOpen":      true,
 		"WindowClosesIn":  "23h 59m",
 		"AgentIDStr":      *contact.AgentID,
@@ -51,7 +56,8 @@ func TestWhatsAppRender_ThreadPilot(t *testing.T) {
 	out := buf.String()
 	wants := []string{
 		"1234@s.whatsapp.net",
-		"Resolved Role: manager",
+		"Layla Hassan",
+		"manager",
 		"Authorized (AI Agent Active)",
 		"Operations Brain",
 		// The assigned brain must render as the pre-selected option. This guards
@@ -86,7 +92,6 @@ func TestWhatsAppRender_SLAClosed(t *testing.T) {
 		"WaContact":       contact,
 		"Messages":        []database.WaMessage{},
 		"PublishedAgents": []database.Agent{},
-		"Role":            "client",
 		"WindowOpen":      false,
 	}
 

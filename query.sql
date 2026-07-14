@@ -82,6 +82,50 @@ SET name = $2, system_prompt = $3, greeting_message = $4, failure_message = $5,
 WHERE id = $1
 RETURNING *;
 
+-- name: UpsertPromptModule :exec
+INSERT INTO prompt_modules (id, name, type, status, owner_team, updated_at)
+VALUES ($1, $2, $3, $4, $5, NOW())
+ON CONFLICT (id) DO UPDATE
+SET name = EXCLUDED.name, type = EXCLUDED.type, status = EXCLUDED.status,
+    owner_team = EXCLUDED.owner_team, updated_at = NOW();
+
+-- name: UpsertPromptModuleVersion :exec
+INSERT INTO prompt_module_versions (id, module_id, version, body, hash, changelog)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (module_id, version) DO UPDATE
+SET body = EXCLUDED.body, hash = EXCLUDED.hash, changelog = EXCLUDED.changelog;
+
+-- name: UpsertPromptStack :exec
+INSERT INTO prompt_stacks (id, agent_id, name, status, updated_at)
+VALUES ($1, $2, $3, $4, NOW())
+ON CONFLICT (id) DO UPDATE
+SET agent_id = EXCLUDED.agent_id, name = EXCLUDED.name, status = EXCLUDED.status, updated_at = NOW();
+
+-- name: UpsertPromptStackModule :exec
+INSERT INTO prompt_stack_modules (stack_id, module_version_id, order_index, condition_expr)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (stack_id, module_version_id) DO UPDATE
+SET order_index = EXCLUDED.order_index, condition_expr = EXCLUDED.condition_expr;
+
+-- name: ListPromptStackModulesByAgent :many
+SELECT
+    ps.id AS stack_id,
+    ps.name AS stack_name,
+    pm.id AS module_id,
+    pm.name AS module_name,
+    pm.type AS module_type,
+    pmv.id AS module_version_id,
+    pmv.version AS module_version,
+    pmv.body AS body,
+    pmv.hash AS hash,
+    psm.order_index AS order_index
+FROM prompt_stacks ps
+JOIN prompt_stack_modules psm ON psm.stack_id = ps.id
+JOIN prompt_module_versions pmv ON pmv.id = psm.module_version_id
+JOIN prompt_modules pm ON pm.id = pmv.module_id
+WHERE ps.agent_id = $1 AND ps.status = 'active' AND pm.status = 'active'
+ORDER BY psm.order_index ASC, pm.name ASC;
+
 -- name: GetWaContact :one
 SELECT * FROM wa_contacts
 WHERE chat_id = $1 LIMIT 1;
@@ -98,6 +142,27 @@ RETURNING *;
 UPDATE wa_contacts
 SET enabled = $2, agent_id = $3, updated_at = NOW()
 WHERE chat_id = $1
+RETURNING *;
+
+-- name: UpdateWaContactErpLink :one
+-- Persists the outcome of resolving this contact's phone against the ERP
+-- (see internal/erp.Client.ResolveIdentity). erp_unresolved_reason is set
+-- when resolution didn't produce an identity, and cleared otherwise.
+INSERT INTO wa_contacts (chat_id, erp_uid, erp_display_name, erp_org_id, erp_role, erp_unresolved_reason, erp_resolved_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+ON CONFLICT (chat_id) DO UPDATE
+SET erp_uid = EXCLUDED.erp_uid, erp_display_name = EXCLUDED.erp_display_name,
+    erp_org_id = EXCLUDED.erp_org_id, erp_role = EXCLUDED.erp_role,
+    erp_unresolved_reason = EXCLUDED.erp_unresolved_reason, erp_resolved_at = NOW()
+RETURNING *;
+
+-- name: UpdateWaContactErpOverride :one
+-- Sets (or clears, with an empty string) the phone number an operator wants
+-- used for ERP identity resolution instead of the one derived from chat_id.
+INSERT INTO wa_contacts (chat_id, erp_phone_override, updated_at)
+VALUES ($1, $2, NOW())
+ON CONFLICT (chat_id) DO UPDATE
+SET erp_phone_override = EXCLUDED.erp_phone_override, updated_at = NOW()
 RETURNING *;
 
 -- name: ListWaContacts :many
@@ -133,7 +198,9 @@ SELECT * FROM (
     SELECT DISTINCT ON (m.chat_id)
         m.chat_id, m.content AS last_message, m.direction AS last_direction,
         m.sender AS last_sender, m.created_at AS last_message_at,
-        c.name AS contact_name, c.enabled AS contact_enabled, c.agent_id AS contact_agent_id
+        c.name AS contact_name, c.enabled AS contact_enabled, c.agent_id AS contact_agent_id,
+        c.erp_display_name AS contact_erp_display_name, c.erp_org_id AS contact_erp_org_id,
+        c.erp_role AS contact_erp_role, c.erp_unresolved_reason AS contact_erp_unresolved_reason
     FROM wa_messages m
     LEFT JOIN wa_contacts c ON c.chat_id = m.chat_id
     ORDER BY m.chat_id, m.created_at DESC, m.id DESC

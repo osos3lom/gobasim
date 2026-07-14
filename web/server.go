@@ -96,37 +96,6 @@ type BlueprintDefaults struct {
 	AutoEnable            bool   `json:"auto_enable"`
 }
 
-// resolveRole resolves a contact's role from the ERP.
-// Perf note: N live calls for the chat list is acceptable at single-operator scale;
-// revisit with a persisted resolved_role column if contact counts grow.
-func (s *Server) resolveRole(ctx context.Context, chatID string, cache map[string]string) string {
-	if s.erpClient == nil {
-		return ""
-	}
-	phone := strings.Split(chatID, "@")[0]
-	if phone == "" {
-		return ""
-	}
-	if cache != nil {
-		if role, ok := cache[phone]; ok {
-			return role
-		}
-	}
-	reqCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-	identity, err := s.erpClient.ResolveIdentity(reqCtx, phone)
-	if err != nil || identity == nil {
-		if cache != nil {
-			cache[phone] = ""
-		}
-		return ""
-	}
-	if cache != nil {
-		cache[phone] = identity.Role
-	}
-	return identity.Role
-}
-
 // NewServer wires up the dashboard's dependencies. ttsOrch is the same
 // instance main.go already constructs for the auto-reply pipeline — reused
 // (not re-constructed) here so "send as voice note" shares one TTS provider
@@ -321,6 +290,8 @@ func (s *Server) GetRouter() chi.Router {
 		r.Get("/dashboard/whatsapp/contacts", s.handleGetWaContactsFragment)
 		r.With(s.requireCSRF).Post("/dashboard/whatsapp/contacts/{chatID}/toggle", s.handlePostToggleWaContact)
 		r.With(s.requireCSRF).Post("/dashboard/whatsapp/contacts/{chatID}/agent", s.handlePostAssignWaContactAgent)
+		r.With(s.requireCSRF).Post("/dashboard/whatsapp/contacts/{chatID}/erp-override", s.handlePostSetWaContactErpOverride)
+		r.With(s.requireCSRF).Post("/dashboard/whatsapp/contacts/{chatID}/resolve-identity", s.handlePostResolveWaContactIdentity)
 		r.With(s.requireCSRF).Post("/dashboard/whatsapp/settings", s.handlePostWhatsAppSettings)
 		r.Get("/dashboard/whatsapp/chats", s.handleGetWaChatsFragment)
 		r.Get("/dashboard/whatsapp/chats/{chatID}/messages", s.handleGetWaMessagesFragment)
@@ -520,8 +491,9 @@ func (s *Server) renderWhatsAppCard(w http.ResponseWriter, r *http.Request, over
 // either way, with no reliance on $.
 type waContactRow struct {
 	database.WaContact
-	CSRFToken       string
-	PublishedAgents []database.Agent
+	CSRFToken          string
+	PublishedAgents    []database.Agent
+	ErpUnresolvedLabel string
 }
 
 // fetchPublishedAgents lists agents eligible for contact assignment. Only
@@ -552,14 +524,14 @@ func (s *Server) fetchWaContactRows(ctx context.Context, query, csrfToken string
 		if query != "" && !strings.Contains(strings.ToLower(c.Name), query) && !strings.Contains(strings.ToLower(c.ChatID), query) {
 			continue
 		}
-		rows = append(rows, waContactRow{WaContact: c, CSRFToken: csrfToken, PublishedAgents: publishedAgents})
+		rows = append(rows, waContactRow{
+			WaContact:          c,
+			CSRFToken:          csrfToken,
+			PublishedAgents:    publishedAgents,
+			ErpUnresolvedLabel: erpUnresolvedLabel(c.ErpUnresolvedReason),
+		})
 	}
 	return rows
-}
-
-type chatRow struct {
-	database.ListWaChatsSummaryRow
-	Role string
 }
 
 // agentIDValue dereferences a nullable assigned-agent id into a plain string
@@ -574,39 +546,35 @@ func agentIDValue(id *string) string {
 	return *id
 }
 
-// resolveRolesForChats resolves the ERP role for each chat, bounded to a small
-// number of concurrent ERP calls. Resolving sequentially made an ERP outage
-// stall the whole dashboard for up to N*2s (each resolveRole call carries a 2s
-// timeout); fanning out caps the worst case at roughly ceil(N/roleResolveConcurrency)*2s.
-// Each goroutine writes only its own slice slot and passes a nil cache, so no
-// shared state needs locking (erp.Client has its own concurrency-safe cache).
-func (s *Server) resolveRolesForChats(ctx context.Context, chats []database.ListWaChatsSummaryRow) []chatRow {
-	const roleResolveConcurrency = 8
-	out := make([]chatRow, len(chats))
-	sem := make(chan struct{}, roleResolveConcurrency)
-	var wg sync.WaitGroup
-	for i, c := range chats {
-		out[i] = chatRow{ListWaChatsSummaryRow: c}
-		wg.Add(1)
-		sem <- struct{}{}
-		go func(idx int, chatID string) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			out[idx].Role = s.resolveRole(ctx, chatID, nil)
-		}(i, c.ChatID)
+// erpUnresolvedLabel turns a wa_contacts.erp_unresolved_reason value into an
+// operator-facing label. Same *string-vs-string issue as agentIDValue: the
+// template can't do {{eq .ErpUnresolvedReason "no_match"}} directly, so the
+// comparison happens here and the result is passed in already as a string.
+func erpUnresolvedLabel(reason *string) string {
+	if reason == nil {
+		return "not yet resolved"
 	}
-	wg.Wait()
-	return out
+	switch *reason {
+	case erp.UnresolvedPhoneUnverified:
+		return "phone unverified"
+	case erp.UnresolvedNoMatch:
+		return "no ERP match"
+	default:
+		return *reason
+	}
 }
 
 func (s *Server) handleGetWhatsAppPage(w http.ResponseWriter, r *http.Request) {
 	token := s.ensureCSRFToken(w, r)
+	// Chat identity (ContactErpRole/DisplayName/OrgID/UnresolvedReason) comes
+	// straight off the persisted wa_contacts columns via the join in
+	// ListWaChatsSummary — no live ERP call on page render. Identity is kept
+	// current by the inbound message handler and a contact's "Resolve now"
+	// action, not by re-resolving on every dashboard load.
 	chats, err := s.queries.ListWaChatsSummary(r.Context())
 	if err != nil {
 		chats = []database.ListWaChatsSummaryRow{}
 	}
-
-	wrappedChats := s.resolveRolesForChats(r.Context(), chats)
 
 	var bp BlueprintDefaults
 	settings, err := s.queries.GetSettings(r.Context())
@@ -619,7 +587,7 @@ func (s *Server) handleGetWhatsAppPage(w http.ResponseWriter, r *http.Request) {
 		"Page":            "whatsapp",
 		"Partial":         false,
 		"Contacts":        s.fetchWaContactRows(r.Context(), "", token),
-		"Chats":           wrappedChats,
+		"Chats":           chats,
 		"CSRFToken":       token,
 		"Blueprint":       bp,
 		"PublishedAgents": s.fetchPublishedAgents(r.Context()),
@@ -661,22 +629,24 @@ func (s *Server) handlePostToggleWaContact(w http.ResponseWriter, r *http.Reques
 
 	view := r.FormValue("view")
 	if view == "pilot" {
-		role := s.resolveRole(r.Context(), chatID, nil)
+		// ERP identity (WaContact.Erp*) is read straight off the row — no
+		// live ERP call here; that's the "Resolve now" action's job.
 		s.renderTemplate(w, "whatsapp.html", map[string]interface{}{
-			"WaContact":       updated,
-			"CSRFToken":       s.ensureCSRFToken(w, r),
-			"PublishedAgents": s.fetchPublishedAgents(r.Context()),
-			"Role":            role,
-			"AgentIDStr":      agentIDValue(updated.AgentID),
-			"PartialView":     "pilot_panel",
-			"Partial":         true,
+			"WaContact":          updated,
+			"CSRFToken":          s.ensureCSRFToken(w, r),
+			"PublishedAgents":    s.fetchPublishedAgents(r.Context()),
+			"AgentIDStr":         agentIDValue(updated.AgentID),
+			"ErpUnresolvedLabel": erpUnresolvedLabel(updated.ErpUnresolvedReason),
+			"PartialView":        "pilot_panel",
+			"Partial":            true,
 		})
 	} else {
 		s.renderTemplate(w, "whatsapp.html", map[string]interface{}{
 			"Row": waContactRow{
-				WaContact:       updated,
-				CSRFToken:       s.ensureCSRFToken(w, r),
-				PublishedAgents: s.fetchPublishedAgents(r.Context()),
+				WaContact:          updated,
+				CSRFToken:          s.ensureCSRFToken(w, r),
+				PublishedAgents:    s.fetchPublishedAgents(r.Context()),
+				ErpUnresolvedLabel: erpUnresolvedLabel(updated.ErpUnresolvedReason),
 			},
 			"PartialView": "contact_row",
 			"Partial":     true,
@@ -733,27 +703,121 @@ func (s *Server) handlePostAssignWaContactAgent(w http.ResponseWriter, r *http.R
 
 	view := r.FormValue("view")
 	if view == "pilot" {
-		role := s.resolveRole(r.Context(), chatID, nil)
 		s.renderTemplate(w, "whatsapp.html", map[string]interface{}{
-			"WaContact":       updated,
-			"CSRFToken":       s.ensureCSRFToken(w, r),
-			"PublishedAgents": s.fetchPublishedAgents(r.Context()),
-			"Role":            role,
-			"AgentIDStr":      agentIDValue(updated.AgentID),
-			"PartialView":     "pilot_panel",
-			"Partial":         true,
+			"WaContact":          updated,
+			"CSRFToken":          s.ensureCSRFToken(w, r),
+			"PublishedAgents":    s.fetchPublishedAgents(r.Context()),
+			"AgentIDStr":         agentIDValue(updated.AgentID),
+			"ErpUnresolvedLabel": erpUnresolvedLabel(updated.ErpUnresolvedReason),
+			"PartialView":        "pilot_panel",
+			"Partial":            true,
 		})
 	} else {
 		s.renderTemplate(w, "whatsapp.html", map[string]interface{}{
 			"Row": waContactRow{
-				WaContact:       updated,
-				CSRFToken:       s.ensureCSRFToken(w, r),
-				PublishedAgents: s.fetchPublishedAgents(r.Context()),
+				WaContact:          updated,
+				CSRFToken:          s.ensureCSRFToken(w, r),
+				PublishedAgents:    s.fetchPublishedAgents(r.Context()),
+				ErpUnresolvedLabel: erpUnresolvedLabel(updated.ErpUnresolvedReason),
 			},
 			"PartialView": "contact_row",
 			"Partial":     true,
 		})
 	}
+}
+
+// renderWaContactAfterErpAction re-renders a contact after an ERP
+// link/override action, in either the pilot-panel or contact-row shape
+// (matching handlePostToggleWaContact / handlePostAssignWaContactAgent).
+func (s *Server) renderWaContactAfterErpAction(w http.ResponseWriter, r *http.Request, contact database.WaContact) {
+	if r.FormValue("view") == "pilot" {
+		s.renderTemplate(w, "whatsapp.html", map[string]interface{}{
+			"WaContact":          contact,
+			"CSRFToken":          s.ensureCSRFToken(w, r),
+			"PublishedAgents":    s.fetchPublishedAgents(r.Context()),
+			"AgentIDStr":         agentIDValue(contact.AgentID),
+			"ErpUnresolvedLabel": erpUnresolvedLabel(contact.ErpUnresolvedReason),
+			"PartialView":        "pilot_panel",
+			"Partial":            true,
+		})
+		return
+	}
+	s.renderTemplate(w, "whatsapp.html", map[string]interface{}{
+		"Row": waContactRow{
+			WaContact:          contact,
+			CSRFToken:          s.ensureCSRFToken(w, r),
+			PublishedAgents:    s.fetchPublishedAgents(r.Context()),
+			ErpUnresolvedLabel: erpUnresolvedLabel(contact.ErpUnresolvedReason),
+		},
+		"PartialView": "contact_row",
+		"Partial":     true,
+	})
+}
+
+// handlePostSetWaContactErpOverride sets (or, given an empty value, clears)
+// the phone number an operator wants used for ERP identity resolution
+// instead of the one derived from the WhatsApp chat_id — for contacts whose
+// WhatsApp number doesn't match what's registered in the ERP. It then
+// immediately re-resolves so the operator sees the effect in one step.
+func (s *Server) handlePostSetWaContactErpOverride(w http.ResponseWriter, r *http.Request) {
+	chatID := chi.URLParam(r, "chatID")
+	override := strings.TrimSpace(r.FormValue("erp_phone_override"))
+
+	var overridePtr *string
+	if override != "" {
+		overridePtr = &override
+	}
+
+	contact, err := s.queries.UpdateWaContactErpOverride(r.Context(), database.UpdateWaContactErpOverrideParams{
+		ChatID:           chatID,
+		ErpPhoneOverride: overridePtr,
+	})
+	if err != nil {
+		http.Error(w, "Failed to update contact", http.StatusInternalServerError)
+		return
+	}
+
+	if s.erpClient != nil {
+		if _, err := erp.ResolveAndPersistContactIdentity(r.Context(), s.erpClient, s.queries, chatID, contact.ErpPhoneOverride); err != nil {
+			monitor.ReportError(r.Context(), "identity", err)
+		} else if refreshed, err := s.queries.GetWaContact(r.Context(), chatID); err == nil {
+			contact = refreshed
+		}
+	}
+
+	s.renderWaContactAfterErpAction(w, r, contact)
+}
+
+// handlePostResolveWaContactIdentity re-resolves a contact's ERP identity on
+// demand ("Resolve now"), using erp_phone_override when set. Unlike the
+// dashboard's read paths, this always makes a live ERP call.
+func (s *Server) handlePostResolveWaContactIdentity(w http.ResponseWriter, r *http.Request) {
+	chatID := chi.URLParam(r, "chatID")
+
+	contact, err := s.queries.GetWaContact(r.Context(), chatID)
+	if err != nil {
+		http.Error(w, "Contact not found", http.StatusNotFound)
+		return
+	}
+
+	if s.erpClient == nil {
+		http.Error(w, "ERP integration not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	if _, err := erp.ResolveAndPersistContactIdentity(r.Context(), s.erpClient, s.queries, chatID, contact.ErpPhoneOverride); err != nil {
+		monitor.ReportError(r.Context(), "identity", err)
+		http.Error(w, "ERP resolution failed: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	refreshed, err := s.queries.GetWaContact(r.Context(), chatID)
+	if err != nil {
+		http.Error(w, "Contact not found", http.StatusNotFound)
+		return
+	}
+
+	s.renderWaContactAfterErpAction(w, r, refreshed)
 }
 
 func (s *Server) handleGetWhatsAppStatus(w http.ResponseWriter, r *http.Request) {
@@ -837,10 +901,8 @@ func (s *Server) handleGetWaChatsFragment(w http.ResponseWriter, r *http.Request
 		chats = []database.ListWaChatsSummaryRow{}
 	}
 
-	wrappedChats := s.resolveRolesForChats(r.Context(), chats)
-
 	s.renderTemplate(w, "whatsapp.html", map[string]interface{}{
-		"Chats":       wrappedChats,
+		"Chats":       chats,
 		"PartialView": "chats",
 		"Partial":     true,
 	})
@@ -917,20 +979,18 @@ func (s *Server) handleGetWaMessagesFragment(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
-	role := s.resolveRole(r.Context(), chatID, nil)
-
 	s.renderTemplate(w, "whatsapp.html", map[string]interface{}{
-		"ChatID":          chatID,
-		"Messages":        messages,
-		"CSRFToken":       s.ensureCSRFToken(w, r),
-		"WindowOpen":      windowOpen,
-		"WindowClosesIn":  windowClosesIn,
-		"WaContact":       contact,
-		"PublishedAgents": s.fetchPublishedAgents(r.Context()),
-		"Role":            role,
-		"AgentIDStr":      agentIDValue(contact.AgentID),
-		"PartialView":     "thread_pilot",
-		"Partial":         true,
+		"ChatID":             chatID,
+		"Messages":           messages,
+		"CSRFToken":          s.ensureCSRFToken(w, r),
+		"WindowOpen":         windowOpen,
+		"WindowClosesIn":     windowClosesIn,
+		"WaContact":          contact,
+		"PublishedAgents":    s.fetchPublishedAgents(r.Context()),
+		"AgentIDStr":         agentIDValue(contact.AgentID),
+		"ErpUnresolvedLabel": erpUnresolvedLabel(contact.ErpUnresolvedReason),
+		"PartialView":        "thread_pilot",
+		"Partial":            true,
 	})
 }
 
@@ -1197,13 +1257,13 @@ func (s *Server) handlePostCreateWorkflow(w http.ResponseWriter, r *http.Request
 		// Seed with real, provider-aligned defaults (agentcfg) rather than the
 		// former placeholder blobs (minimax / "Radiant Girl") that matched no
 		// implemented provider.
-		Asr:           agentcfg.DefaultASR().Marshal(),
-		Llm:           agentcfg.DefaultLLM().Marshal(),
-		Tts:           agentcfg.DefaultTTS().Marshal(),
-		TurnDetection: true,
-		StartOfSpeech: true,
-		EndOfSpeech:   true,
-		MaxHistory:    int32(agentcfg.DefaultHistory),
+		Asr:                agentcfg.DefaultASR().Marshal(),
+		Llm:                agentcfg.DefaultLLM().Marshal(),
+		Tts:                agentcfg.DefaultTTS().Marshal(),
+		TurnDetection:      true,
+		StartOfSpeech:      true,
+		EndOfSpeech:        true,
+		MaxHistory:         int32(agentcfg.DefaultHistory),
 		McpServers:         []byte(`[]`),
 		Skills:             []byte(`[]`),
 		SubAgents:          agentcfg.DefaultSubAgents().Marshal(),
