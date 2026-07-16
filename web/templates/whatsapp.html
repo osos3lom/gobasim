@@ -408,8 +408,10 @@
 
     <!-- Message thread + Pilot Panel wrapper (right) -->
     <div class="md:col-span-3 glass rounded-2xl border border-indigo-950/40 overflow-hidden flex flex-col">
-        <div id="wa-thread-pilot" class="flex-1 flex items-center justify-center text-gray-400 text-sm p-4 text-center">
-            Select a chat to view its message history and agentic pilot configurations.
+        <div id="wa-thread-pilot" class="flex-1 min-h-0 overflow-hidden">
+            <div class="h-full flex items-center justify-center text-gray-400 text-sm p-4 text-center">
+                Select a chat to view its message history and agentic pilot configurations.
+            </div>
         </div>
     </div>
 </div>
@@ -452,11 +454,11 @@
 {{define "wa_thread_pilot"}}
 <div class="grid grid-cols-1 md:grid-cols-3 h-full divide-x divide-indigo-950/50">
     <!-- Thread (cols 1-2) -->
-    <div class="md:col-span-2 flex flex-col h-full overflow-hidden">
+    <div class="md:col-span-2 flex flex-col h-full min-h-0 overflow-hidden">
         {{template "wa_messages_thread" .}}
     </div>
     <!-- Pilot panel (col 3) -->
-    <div class="md:col-span-1 flex flex-col h-full overflow-y-auto p-4 bg-slate-950/20">
+    <div class="md:col-span-1 flex flex-col h-full min-h-0 overflow-y-auto p-4 bg-slate-950/20">
         {{template "wa_pilot_panel" .}}
     </div>
 </div>
@@ -573,7 +575,7 @@
         </div>
         {{end}}
     </div>
-    <div id="wa-message-list" class="flex-1 overflow-y-auto p-4 space-y-2" role="log" aria-live="polite">
+    <div id="wa-message-list" class="flex-1 min-h-0 overflow-y-auto p-4 space-y-2" role="log" aria-live="polite">
         {{range .Messages}}{{template "wa_message_bubble" .}}{{else}}
         <div class="text-center text-gray-400 text-sm py-8">No messages yet.</div>
         {{end}}

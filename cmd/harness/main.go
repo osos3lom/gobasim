@@ -65,9 +65,9 @@ func readSchemaFile() (string, error) {
 func main() {
 	log.Println("Starting Sawt Production readiness harness...")
 
-	// 1. Try to load .env.production configuration
-	if err := loadDotEnv(".env.production"); err != nil {
-		log.Printf("Notice: could not read .env.production: %v (will rely on environment variables)", err)
+	// 1. Try to load .env configuration
+	if err := loadDotEnv(".env"); err != nil {
+		log.Printf("Notice: could not read .env: %v (will rely on environment variables)", err)
 	}
 
 	// Override port for the harness if not set, or default to 8091 to avoid collision with standard runs

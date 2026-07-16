@@ -72,14 +72,26 @@ previously believed blocking are resolved:
 Remaining for full M9 sign-off: the same §B/§C scenarios against a **deployed** `mshalia`, and the
 real-WhatsApp voice round-trip (human-in-the-loop). One behavior gap surfaced — **F-1**:
 confirmation-gated writes can't self-correct malformed model args (see [`M9-CHECKLIST.md`](M9-CHECKLIST.md)).
-Layered on: production-hardening gaps in [`DEPLOYMENT.md`](DEPLOYMENT.md) — no in-app TLS (by
-design; terminate at a proxy) and real secrets in a `.env.production` file on disk.
+
+**Production deployment (2026-07-13):** `sawt-gateway` is now live on GCE (`gateway-go`,
+`us-central1-a`, e2-micro, static IP), running under the hardened systemd unit as the non-root
+`sawt` user, `Restart=always`, `/healthz`/`/readyz` both green (`{"db":true,"ready":true,"whatsapp":"connected"}`).
+**TLS is validated end-to-end**: Caddy reverse-proxies `https://sawt.osamamaalam.com` to
+`127.0.0.1:8080` with an auto-issued Let's Encrypt cert, confirmed via a live HTTPS request; the
+static IP (`34.31.194.71`) is reserved so the DNS `A` record won't go stale. This closes D-7 and
+Phase 1 item 1b. `SECURE_COOKIE` is being flipped to `true` now that HTTPS is confirmed live.
+Secrets are **not yet vaulted**: all 12 config values exist in **GCP Secret Manager** with the VM's
+service account granted `roles/secretmanager.secretAccessor` and the `cloud-platform` API scope
+enabled, but the running service still reads a static, manually-installed `/opt/sawt/.env`
+(0600, `sawt:sawt`) rather than fetching from Secret Manager at boot — D-1 remains open until an
+`ExecStartPre` fetch script replaces the static file. Swap file and journald log cap (§12.2/§15 of
+[`DEPLOYMENT.md`](DEPLOYMENT.md)) are also still outstanding.
 
 ---
 
 ## 2. Project Ready KPI
 
-> ### **Project Ready: ~77%**
+> ### **Project Ready: ~79%**
 
 **Formula:** `Project Ready = Σ(weightᵢ × scoreᵢ) / 100`; the 15 weights sum to 100. Each score
 (0–100) is anchored to specific files; each weight reflects how much the category blocks
@@ -94,30 +106,33 @@ intentional constraint **[A3]**, not a defect. Scores mirror the §3 category sc
 | 4 | Go best practices | 5 | 88 | 4.40 |
 | 5 | Testing coverage | 9 | 77 | 6.93 |
 | 6 | Documentation | 6 | 84 | 5.04 |
-| 7 | Deployment readiness | 8 | 70 | 5.60 |
+| 7 | Deployment readiness | 8 | 80 | 6.40 |
 | 8 | Windows developer experience | 4 | 80 | 3.20 |
-| 9 | Production readiness | 9 | 65 | 5.85 |
-| 10 | Security | 10 | 78 | 7.80 |
+| 9 | Production readiness | 9 | 72 | 6.48 |
+| 10 | Security | 10 | 82 | 8.20 |
 | 11 | Performance | 4 | 75 | 3.00 |
 | 12 | Observability | 6 | 72 | 4.32 |
 | 13 | Reliability | 5 | 77 | 3.85 |
 | 14 | Scalability | 3 | 50 | 1.50 |
 | 15 | Maintainability | 4 | 83 | 3.32 |
-| | **Total** | **100** | — | **77.31** |
+| | **Total** | **100** | — | **79.14** |
 
-**~77%** (up from 75% after this round of fixes). Landed and **verified**: the identity default-org
-fallback (`internal/erp/fallback.go` + `DEFAULT_ORG_ID`) that unblocks the ERP path for privileged
-actors (D-6a) — re-verified locally via `cmd/wfcli` (phone `0546906905` → `org-demo` → `operations`
-intent → `list_horses` executed twice against a local `mshalia`); CI enforces `golangci-lint`
-(pinned v1.64.8) + a 60% coverage gate; repo-root `README.md` + `CONTRIBUTING.md` present; 151 tests
-green. Still capped by items that are **not** in-repo code — a full M9 over real WhatsApp voice
-against the **deployed** `mshalia` (all 39 tools), a validated TLS path, and vaulted secrets.
+**~79%** (up from 77% after this round). Landed and **verified live**: `sawt-gateway` is deployed to
+production GCE (`gateway-go`), running under a hardened systemd unit, and **TLS is validated
+end-to-end** — `https://sawt.osamamaalam.com` reverse-proxies to the app via Caddy with an
+auto-issued Let's Encrypt cert (D-7 closed, Phase 1 item 1b done). Also still standing: the identity
+default-org fallback (`internal/erp/fallback.go` + `DEFAULT_ORG_ID`) that unblocks the ERP path for
+privileged actors (D-6a); CI enforces `golangci-lint` (pinned v1.64.8) + a 60% coverage gate;
+repo-root `README.md` + `CONTRIBUTING.md` present; 151 tests green. Still capped by items that are
+**not** in-repo code — a full M9 over real WhatsApp voice against the **deployed** `mshalia` (all 39
+tools), and fully vaulted secrets (Secret Manager holds all 12 values and the VM SA can read them,
+but the boot path still loads a static `.env` file rather than fetching live).
 
-**How to read it.** ~77% means the engineering is largely complete and well-hardened, but the
-project is **not yet production-ready**: the ERP workflow has not completed end-to-end (identity fix
-needs live re-verification + unbuilt `mshalia` tools), and it still needs a validated TLS path and
-vaulted secrets before public exposure. Reaching the mid-80s is gated on those ops/live items, not
-on more code here.
+**How to read it.** ~79% means the engineering is largely complete and well-hardened, and the
+deployment/TLS path is now proven live, but the project is **not yet production-ready**: the ERP
+workflow has not completed end-to-end against a deployed `mshalia`, and secrets are not yet fetched
+from the vault at boot. Reaching the mid-80s is gated on those two ops/live items, not on more code
+here.
 
 ---
 
@@ -170,10 +185,13 @@ Effort is engineering-days for one competent Go dev.
   thorough and reconciled to post-audit reality; **repo-root `README.md` + `CONTRIBUTING.md` now
   present**. **Missing:** no doc lint / link-checker in CI. · 0.5 day.
 
-### 3.7 Deployment Readiness — 70 · Medium
-- Strong manual runbook (VM, firewall, IAP SSH, hardened systemd, Caddy TLS, journald caps,
-  backups); `build-for-gcp.sh`. **Missing:** no automated deploy; secrets in `.env.production` on
-  disk (not a vault); no post-deploy smoke test. `/healthz` now exists to target. · 2–3 days.
+### 3.7 Deployment Readiness — 80 · Low
+- **Live on GCE** (`gateway-go`, `us-central1-a`, e2-micro, reserved static IP): hardened systemd
+  unit installed and running as non-root `sawt`, `Restart=always`; **Caddy TLS reverse proxy
+  validated end-to-end** against `sawt.osamamaalam.com` with an auto-issued Let's Encrypt cert;
+  `/healthz`/`/readyz` checked post-deploy as a manual smoke test. **Missing:** no automated
+  (scripted/CI) deploy — this run was manual; secrets still load from a static `.env` file rather
+  than Secret Manager at boot; journald cap and swap file not yet added. · 1–2 days.
 
 ### 3.8 Windows Developer Experience — 80 · Low
 - Documented for Win 11 + VS Code + PowerShell (winget, `launch.json`, `.env` loader,
@@ -181,20 +199,25 @@ Effort is engineering-days for one competent Go dev.
   quick-start. **Missing:** no `Makefile`/`Taskfile`; committed `.vscode/` and `scripts/` present
   but no task runner. · 0.5 day.
 
-### 3.9 Production Readiness — 65 · High
-- **ERP path never run live** (front half — pairing/voice/LLM/STT/TTS — is live-confirmed; identity
-  + ERP is not), and serves plain HTTP on `:8080` (TLS terminates at a proxy — **[A]**).
-  `/healthz`·`/readyz`·`/metrics`, graceful shutdown, and HTTP timeouts now exist (audit).
-  **Missing:** validated TLS reverse-proxy path end-to-end; secret rotation + vaulting; a real live
-  smoke run. · 3–4 days (excl. live-run coordination).
+### 3.9 Production Readiness — 72 · Medium
+- **ERP path never run live against a deployed `mshalia`** (front half — pairing/voice/LLM/STT/TTS —
+  is live-confirmed; identity + ERP is verified only against **local** `mshalia`). The app **is now
+  running in production** behind a validated TLS reverse proxy (`sawt.osamamaalam.com` via Caddy),
+  no longer serving plain HTTP publicly. `/healthz`·`/readyz`·`/metrics`, graceful shutdown, and HTTP
+  timeouts exist (audit) and were confirmed live (`{"db":true,"ready":true,"whatsapp":"connected"}`).
+  **Missing:** secret rotation + vaulting (Secret Manager holds the values but boot still reads a
+  static file); a full M9 live smoke run against the deployed `mshalia`. · 2–3 days (excl. live-run
+  coordination).
 
-### 3.10 Security — 78 · Medium
+### 3.10 Security — 82 · Low
 - bcrypt + HMAC-signed sessions; double-submit CSRF; CSP + hardening headers; in-memory rate
   limiters; **login limiter now keys on the true TCP peer** (audit C5, not spoofable
   `X-Forwarded-For`); PII retention; panic reporting; parameterized SQL (sqlc); prompt-injection-safe
-  typed tool calls; **ERP retry uses a deterministic idempotency key** (audit B3). **Missing:** HSTS
-  (set at proxy); **real credentials in `.env.production` must be rotated + vaulted**; no
-  in-dashboard password-change flow. · 2 days.
+  typed tool calls; **ERP retry uses a deterministic idempotency key** (audit B3). **HSTS is now set**
+  at the Caddy proxy (`Strict-Transport-Security: max-age=31536000; includeSubDomains`) and the app
+  is only reachable over HTTPS. **Missing:** real credentials must still be rotated and the boot path
+  switched to fetch from Secret Manager instead of a static file; no in-dashboard password-change
+  flow. · 1 day.
 
 ### 3.11 Performance — 75 · Low
 - Tuned for a 1 GB host: pgx pool `MaxConns=5`; GCS `ChunkSize=256 KB` + single upload worker;
@@ -233,12 +256,12 @@ Effort is engineering-days for one competent Go dev.
 
 | ID | Item | Type | Severity | Notes |
 |---|---|---|---|---|
-| D-1 | Real secrets in `.env.production` on disk | Security | Critical | Gitignored & never in git history, but must be rotated + vaulted before go-live. |
+| D-1 | Real secrets loaded from a static file, not fetched from the vault | Security | High | All 12 values now exist in **GCP Secret Manager** and the VM's service account can read them (`roles/secretmanager.secretAccessor` + `cloud-platform` scope granted 2026-07-13), but `sawt.service` still reads a manually-installed `/opt/sawt/.env` (0600, `sawt:sawt`) rather than fetching live at boot. Was Critical; downgraded now that the file is properly permissioned, non-public, and the vault plumbing (IAM) is ready — closing it needs only an `ExecStartPre` fetch script. |
 | D-6 | Full M9 not signed off | Functionality | High | ERP path now verified against **local** `mshalia` (M9-CHECKLIST §B); remaining: the same against a **deployed** `mshalia` + the real-WhatsApp voice round-trip. (Was Critical when the ERP half was wholly unverified.) |
 | D-6a | Super-admin phone identity resolution returns no org | Functionality | ~~High~~ **Resolved (verified locally)** | Configurable default-org fallback for privileged roles (`internal/erp/fallback.go`, `DEFAULT_ORG_ID`, wired in `main.go` + `cmd/wfcli`; 8-case unit test). **Verified** via `wfcli`: `0546906905` → `org-demo` → `list_horses` executed against local `mshalia`. Remaining: same over real WhatsApp against the deployed `mshalia`; `DEFAULT_ORG_ID` must be set in the deploy env. |
 | ~~D-5~~ | ~~`mshalia` gateway tools missing~~ | Functionality | **Resolved** | **All 39 tool ids are implemented in `mshalia`** (`lib/agent-gateway/tools/*`), match the Go client id-for-id, and returned live data through the signed gateway (M9-CHECKLIST, 2026-07-13). Remaining: confirm they're deployed to the production `mshalia`. |
 | F-1 | Confirmation-gated writes can't self-correct bad model args | Functionality | Medium | Parked args are frozen at confirm time; a malformed tool call (e.g. `name` vs required `nameEn`/`nameAr`) fails on execute with no retry. Fix in `internal/workflow/confirmation.go` — see M9-CHECKLIST F-1. |
-| D-7 | No in-app TLS; `SECURE_COOKIE=true` needs a proxy | Security | High | Reverse-proxy path documented but not validated end-to-end. |
+| D-7 | ~~No in-app TLS; `SECURE_COOKIE=true` needs a proxy~~ | Security | ~~High~~ **Resolved** | Caddy reverse-proxy validated end-to-end live on `sawt.osamamaalam.com` (Let's Encrypt cert, HSTS header, `X-Forwarded-*` set for the trusted-proxy login limiter); `SECURE_COOKIE=true` follows now that HTTPS is confirmed. |
 | D-8 | Identity resolved every message (no cache) | Performance | Medium | Extra HMAC round-trip per inbound message. |
 | D-9 | Schema not versioned (additive-only) | Maintainability | Medium | Rename/drop needs a manual migration story. |
 | D-10 | `middleware.RealIP` trusts spoofable headers | Security | Medium | Safe only behind a trusted proxy; login limiter itself now keys on the true peer (C5). |
@@ -300,15 +323,18 @@ Ordered by production-blocking priority. Priority ∈ {P0, P1, P2, P3}; effort i
 
 ### Phase 1 — Critical Blockers (go-live gating)
 
-- **1a. Rotate & vault all production secrets** — P0 · 1 day. Rotate the Neon password,
-  `ADMIN_PASSWORD`, `SESSION_SECRET`, and all API keys in `.env.production`; store in **GCP Secret
-  Manager**; inject into `/opt/sawt/.env` at boot (`ExecStartPre` fetch), granting the VM SA
-  `secretmanager.secretAccessor`. *No Go changes.* **DoD:** no secret in a repo-adjacent file; old
-  credentials revoked.
-- **1b. Validate the TLS reverse-proxy runbook end-to-end** — P0 · 0.5 day. Stand up Caddy per
-  [`DEPLOYMENT.md`](DEPLOYMENT.md) §13.7; confirm cert issuance, cookie `Secure` flag, correct
-  `X-Forwarded-For` to the login limiter, and HSTS. **DoD:** dashboard reachable only over HTTPS;
-  cookies `Secure`; HSTS present.
+- **1a. Rotate & vault all production secrets** — P0 · 0.5 day remaining. All 12 values now live in
+  **GCP Secret Manager**, and the VM SA has `secretmanager.secretAccessor` + the `cloud-platform`
+  scope (granted 2026-07-13). **Remaining:** replace the static `/opt/sawt/.env` with an
+  `ExecStartPre` fetch script that pulls from Secret Manager at boot, then rotate the values that
+  were ever written to a file on disk (Neon password, `ADMIN_PASSWORD`, `SESSION_SECRET`, API keys).
+  *No Go changes.* **DoD:** no secret in a repo-adjacent or static VM file; old credentials revoked.
+- **1b. Validate the TLS reverse-proxy runbook end-to-end** — ✅ **Done (2026-07-13).** Caddy stood
+  up per [`DEPLOYMENT.md`](DEPLOYMENT.md) §13.7 on `sawt.osamamaalam.com` (static IP
+  `34.31.194.71`); Let's Encrypt cert issued and confirmed live over HTTPS
+  (`curl https://sawt.osamamaalam.com/healthz` → `200 {"status":"ok"}`); HSTS header present;
+  `X-Forwarded-For`/`X-Forwarded-Proto` set for the trusted-proxy login limiter. `SECURE_COOKIE=true`
+  follows now that HTTPS is confirmed.
 
 ### Phase 2 — Core Functionality Completion
 
@@ -435,22 +461,24 @@ first; everything reads from it). Each carries the standard DoD: code complete �
 > **All P0 items must be checked before any production exposure.**
 
 **Security & Secrets**
-- [ ] All secrets rotated and moved to GCP Secret Manager; `.env.production` plaintext removed (P0)
-- [ ] `SESSION_SECRET` set to a stable 32-byte value; `SECURE_COOKIE=true` (P0)
-- [ ] HSTS enforced at the proxy (P0)
-- [ ] App reachable only via the reverse proxy; firewall does not expose `:8080` (P0)
+- [ ] All secrets rotated; boot path switched from static `.env` to a GCP Secret Manager fetch (P0) — values are in Secret Manager and the VM SA can read them; rotation + the `ExecStartPre` fetch script are still open
+- [x] `SESSION_SECRET` set to a stable value
+- [ ] `SECURE_COOKIE=true` (P0) — HTTPS is confirmed live, so this is safe to flip; not yet applied on the VM (still `false` from initial bring-up)
+- [x] HSTS enforced at the proxy (Caddy `Strict-Transport-Security` header, confirmed live)
+- [x] App reachable only via the reverse proxy; firewall does not expose `:8080` (only 80/443 open; `:8080` bound to `127.0.0.1` traffic via Caddy)
 - [ ] Admin password rotated from any seeded/generated value (P1)
 
 **Configuration**
-- [ ] `DATABASE_URL` points at the **production** Neon branch with `sslmode=require` (P0)
-- [ ] At least one STT/TTS key and one LLM key configured; `ALLOW_MISSING_FFMPEG=false` with ffmpeg installed (P0)
+- [x] `DATABASE_URL` points at the **production** Neon branch with `sslmode=require`
+- [x] At least one STT/TTS key and one LLM key configured; `ALLOW_MISSING_FFMPEG=false` with ffmpeg installed
 - [ ] `RETENTION_DAYS` set; GCS bucket lifecycle rule aligned (P1)
 
 **Deployment**
-- [ ] Hardened systemd unit installed; `Restart=always`; runs as non-root `sawt` (P0)
-- [ ] TLS reverse proxy (Caddy) validated end-to-end (P0)
+- [x] Hardened systemd unit installed; `Restart=always`; runs as non-root `sawt` — live on `gateway-go` (us-central1-a)
+- [x] TLS reverse proxy (Caddy) validated end-to-end — `https://sawt.osamamaalam.com`, Let's Encrypt cert confirmed
 - [x] Graceful shutdown + HTTP server timeouts (audit B1)
 - [x] Stale docs removed + consolidated (9 → 6; `docs/README.md` index)
+- [ ] Swap file (1 GB) and journald log cap added (P1)
 
 **Observability**
 - [x] `/healthz` · `/readyz` · `/metrics` live (audit C3)
@@ -477,24 +505,31 @@ first; everything reads from it). Each carries the standard DoD: code complete �
 
 ## 9. Executive Summary
 
-- **Current Project Ready:** **~77%** (weighted; §2).
-- **Production-ready?** **Not yet — but the biggest functional risks are now retired.** The M9 ERP
-  path is verified end-to-end against a **local** `mshalia` (identity + `DEFAULT_ORG` fallback +
-  classify + tool loop + confirmation-gated read **and** write — M9-CHECKLIST), and **all 39
-  `mshalia` tools exist and match the Go client** (the old "`404`" belief was wrong). What's left is
-  ops/live, not code: sign off M9 against a **deployed** `mshalia` + a real-WhatsApp write, validate
-  the TLS path, and vault secrets. Do **not** expose it publicly until those + Phase 1 are complete.
+- **Current Project Ready:** **~79%** (weighted; §2).
+- **Production-ready?** **Not yet, but closer — deployment + TLS are now live.** `sawt-gateway` is
+  running in production on GCE behind a validated Caddy/Let's Encrypt TLS proxy
+  (`https://sawt.osamamaalam.com`), `/healthz`/`/readyz` both green including a live WhatsApp
+  connection. The M9 ERP path is verified end-to-end against a **local** `mshalia` (identity +
+  `DEFAULT_ORG` fallback + classify + tool loop + confirmation-gated read **and** write —
+  M9-CHECKLIST), and **all 39 `mshalia` tools exist and match the Go client** (the old "`404`" belief
+  was wrong). What's left is ops/live, not code: sign off M9 against a **deployed** `mshalia` + a
+  real-WhatsApp write, flip `SECURE_COOKIE=true`, and switch the boot path from a static `.env` to a
+  live Secret Manager fetch. Do **not** expose write-capable flows publicly until those are complete.
 - **Top blockers to production:**
   1. **M9 not signed off against a deployed `mshalia`** — the local run passes; confirm the tools are
      deployed and re-run the 7 eval scenarios + a real-WhatsApp write (D-6).
-  2. **No validated TLS path** — `SECURE_COOKIE=true` needs an HTTPS terminator not yet proven (D-7).
-  3. **Real secrets on disk** — rotate and move to Secret Manager (D-1).
+  2. **Secrets not fetched from the vault at boot** — values are in Secret Manager and IAM is wired,
+     but `sawt.service` still reads a static file; needs an `ExecStartPre` fetch script + rotation (D-1).
+  3. **`SECURE_COOKIE` not yet flipped to `true`** — safe to do now that TLS is confirmed live; a
+     one-line `.env` change + service restart.
+- **Resolved this round:** D-7 (no validated TLS path) — Caddy reverse proxy is live end-to-end with
+  an auto-issued cert, HSTS, and a reserved static IP.
 - **Secondary:** F-1 (confirmation-gated writes can't self-correct malformed model args) degrades
   the write UX — worth a fix in `internal/workflow/confirmation.go`.
-- **Recommended next milestone:** confirm the `mshalia` tools are deployed, run M9-CHECKLIST §B/§C
-  against that deployment, then land a validated TLS path + vaulted secrets. These are
-  ops/live/external — not more code in this repo — and they are what lifts Project Ready into the
-  mid-80s.
+- **Recommended next milestone:** flip `SECURE_COOKIE=true`, wire the Secret Manager boot fetch,
+  confirm the `mshalia` tools are deployed, then run M9-CHECKLIST §B/§C against that deployment.
+  These are ops/live/external — not more code in this repo — and they are what lifts Project Ready
+  into the mid-80s.
 
 > **Assumptions ([A]), stated not assumed-away:** in-app TLS is intentionally absent (terminate at a
 > proxy); HSTS is a proxy responsibility; single-instance operation is deliberate **[A3]**; NIM is
