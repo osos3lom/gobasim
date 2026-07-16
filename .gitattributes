@@ -4,3 +4,7 @@
 # Go sources are always LF so gofmt stays clean on Windows checkouts and
 # matches the Linux CI environment.
 *.go text eol=lf
+
+# Deploy scripts run on the Linux VM — CRLF would break the shebang line and
+# any heredocs (e.g. gcp/fetch-secrets.sh).
+*.sh text eol=lf

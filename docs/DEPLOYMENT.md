@@ -746,8 +746,11 @@ Each item notes what the code **already does** vs. what you must **add**.
     the `DATABASE_URL` password and `ADMIN_PASSWORD`.
   - Prefer **GCP Secret Manager**: store `DATABASE_URL`, `SESSION_SECRET`, LLM/STT
     keys as secrets; grant the VM's service account `roles/secretmanager.secretAccessor`;
-    fetch them into `/opt/sawt/.env` at boot with an `ExecStartPre` script or a
-    templating tool. This keeps plaintext off the disk.
+    fetch them into `/opt/sawt/.env` at boot with an `ExecStartPre` script. This is now
+    implemented — [`gcp/fetch-secrets.sh`](../gcp/fetch-secrets.sh), wired into
+    [`gcp/sawt.service`](../gcp/sawt.service) — see [`gcp/README.md`](../gcp/README.md) §5a. It's a
+    starting point: check the script's secret-id names against what you actually created in Secret
+    Manager before relying on it.
   - Give the VM a **dedicated service account** with only the roles it needs
     (`storage.objectAdmin` scoped to the voice bucket; `iam.serviceAccountTokenCreator`
     on itself for signed URLs) — not the default editor SA.

@@ -69,7 +69,9 @@ go run ./cmd/wfcli -phone 966546906905 "كم عدد الخيول لدينا؟"
 go run ./cmd/wfcli -role viewer -org org-demo "register an Arabian stallion named X, bay"
 
 # B4. Write + confirmation gate (two turns, SAME -chat so the pending confirmation is shared).
-#     Give BOTH names explicitly — the model must emit nameEn AND nameAr (see Finding F-1).
+#     Both names given explicitly here for a clean single-turn run; giving only the Arabic name
+#     now also works — enforceRequiredArgs derives nameEn and asks for nameAr if even that's
+#     missing, instead of failing post-confirm (Finding F-1, resolved).
 go run ./cmd/wfcli -phone 966546906905 -chat 966546906905@s.whatsapp.net "register a horse: English name Najm, Arabic name نجم, breed Arabian, colour grey, gender stallion"
 go run ./cmd/wfcli -phone 966546906905 -chat 966546906905@s.whatsapp.net "نعم"   # confirm → executes
 
@@ -126,14 +128,15 @@ against the **deployed** `mshalia`, and the real-WhatsApp voice round-trip (§C)
 
 ### Findings
 
-- **F-1 — Confirmation-gated writes can't self-correct malformed model args.** The inline (low-risk
-  read) loop feeds tool errors back to the model for a retry; the confirmation path freezes the
-  parked args at confirm time and executes once. When the model emits schema-non-conforming args
-  (here `name` vs the required `nameEn`/`nameAr` for `register_horse` — a model-quality issue with
+- **F-1 — Confirmation-gated writes can't self-correct malformed model args. RESOLVED.** The inline
+  (low-risk read) loop feeds tool errors back to the model for a retry; the confirmation path used to
+  freeze the parked args at confirm time and execute once. When the model emitted schema-non-conforming
+  args (here `name` vs the required `nameEn`/`nameAr` for `register_horse` — a model-quality issue with
   llama-3.1-70b for some phrasings, **not** a schema/contract mismatch: the Go schema and mshalia
-  Zod agree), the post-"yes" execution fails with `Invalid arguments` and the user must restart.
-  **Options:** (a) validate parked args against the tool's JSON schema **before** asking for
-  confirmation and re-prompt if invalid; (b) allow one self-correction after confirmation;
-  (c) strengthen the `register_horse` prompt/examples; (d) a stronger/instructed model.
-  Not a go-live blocker, but it degrades the write UX and is worth a fix in
-  `internal/workflow/confirmation.go`.
+  Zod agree), the post-"yes" execution failed with `Invalid arguments` and the user had to restart.
+  **Fixed** via option (a) — `enforceRequiredArgs` (`internal/workflow/clarification.go`) validates
+  parsed tool-call args against the tool's own required-fields schema **before** the risk/confirmation
+  gate, auto-derives fields where a derive rule is configured (e.g. `nameEn` transliterated from
+  `nameAr`), and durably parks a "collecting" row asking the user for anything still missing across
+  turns. See `TestEnforceRequiredArgs_MissingFieldsAsksUser` and
+  `TestEnforceRequiredArgs_DeriveSuccessProceedsToRiskGate` in `clarification_test.go`.

@@ -5,8 +5,9 @@ This directory contains the necessary configuration files and the cross-compiled
 ## Deployment Package Files
 
 - [sawt-gateway](file:///c:/Users/Asus/Documents/GitHub/gobasim/gcp/sawt-gateway): The static, cross-compiled Go binary (`linux/amd64`).
-- [.env.production](file:///c:/Users/Asus/Documents/GitHub/gobasim/gcp/.env.production): Template for production environment variables.
-- [sawt.service](file:///c:/Users/Asus/Documents/GitHub/gobasim/gcp/sawt.service): Systemd service unit to manage the process under least-privilege sandboxing.
+- [.env.production](file:///c:/Users/Asus/Documents/GitHub/gobasim/gcp/.env.production): Template for production environment variables (local/manual fallback — see §5a for the Secret Manager boot fetch).
+- [fetch-secrets.sh](file:///c:/Users/Asus/Documents/GitHub/gobasim/gcp/fetch-secrets.sh): `ExecStartPre` script that writes `/opt/sawt/.env` fresh on every boot from GCP Secret Manager, instead of reading a static file. **Check the secret-id names inside it against your actual Secret Manager entries before use** (see the script's header comment).
+- [sawt.service](file:///c:/Users/Asus/Documents/GitHub/gobasim/gcp/sawt.service): Systemd service unit to manage the process under least-privilege sandboxing. Now runs `fetch-secrets.sh` via `ExecStartPre`.
 - [Caddyfile](file:///c:/Users/Asus/Documents/GitHub/gobasim/gcp/Caddyfile): Reverse proxy configuration that automates TLS certificates and secures request handling.
 
 ---
@@ -64,8 +65,9 @@ sudo sysctl -w vm.swappiness=10
 
 #### Install OS Packages
 ```bash
-sudo apt-get update && sudo apt-get install -y ffmpeg
+sudo apt-get update && sudo apt-get install -y ffmpeg jq
 ```
+`jq` is required by `fetch-secrets.sh` (§5a) to parse the Secret Manager API response.
 
 #### Create the Service User & Home Directory
 ```bash
@@ -85,9 +87,14 @@ On your **local workstation**, navigate to this `gcp/` directory and upload the 
 
 ```powershell
 # Upload binary and config files
-gcloud compute scp sawt-gateway .env.production sawt.service Caddyfile \
+gcloud compute scp sawt-gateway sawt.service Caddyfile fetch-secrets.sh \
   sawt-gateway:~ --zone=us-west1-b --tunnel-through-iap
 ```
+
+> [!NOTE]
+> `.env.production` is no longer part of the standard upload — see §5a. Only fall back to it
+> (uploading it here and following the old §5 static-install step below) if Secret Manager isn't
+> set up yet for this VM.
 
 ---
 
@@ -99,16 +106,40 @@ Execute the following commands **on the remote VM** to copy the uploaded files t
 # Install the binary
 sudo install -o sawt -g sawt -m 755 ~/sawt-gateway /opt/sawt/sawt-gateway
 
-# Install the environment configuration
-sudo install -o sawt -g sawt -m 600 ~/env.production /opt/sawt/.env
+# Install the secret-fetch script
+sudo install -o sawt -g sawt -m 755 ~/fetch-secrets.sh /opt/sawt/fetch-secrets.sh
 
-# Clean up local uploads from home directory
-rm -f ~/sawt-gateway ~/env.production
+# Reserve the .env file's inode so ProtectSystem=strict's ReadWritePaths bind
+# mount (sawt.service) has something to attach to — fetch-secrets.sh
+# overwrites its contents on every boot, this just needs to exist once.
+sudo touch /opt/sawt/.env
+sudo chown sawt:sawt /opt/sawt/.env
+sudo chmod 600 /opt/sawt/.env
+
+rm -f ~/sawt-gateway ~/fetch-secrets.sh
 ```
 
-> [!WARNING]
-> Edit `/opt/sawt/.env` directly to input your real production database connection string and API keys before starting:
-> `sudo nano /opt/sawt/.env`
+> [!IMPORTANT]
+> Before starting the service, open `fetch-secrets.sh` and check the `SECRETS` map's secret-id
+> values against what you actually created in Secret Manager (`gcloud secrets list`) — the names in
+> the script are a kebab-case guess, not a guarantee. See §5a below for the full picture.
+
+#### 5a. Secrets: fetched from Secret Manager at boot, not stored on disk
+
+`sawt.service` runs `fetch-secrets.sh` as `ExecStartPre`, which uses the VM's attached service
+account (no gcloud CLI needed — it talks to the metadata server + Secret Manager REST API directly)
+to pull the 12 config values into `/opt/sawt/.env` fresh on every start, instead of the service
+reading a static file that was manually typed in once. This requires:
+- the VM's service account has `roles/secretmanager.secretAccessor`, and the instance has the
+  `cloud-platform` access scope (grant both once, e.g. via the Console or `gcloud iam` /
+  `gcloud compute instances set-service-account`);
+- each of the 12 values actually exists as a secret in **GCP Secret Manager** under the id used in
+  `fetch-secrets.sh`'s `SECRETS` map (edit the map if your naming differs).
+
+**Fallback (no Secret Manager yet):** upload and install `.env.production` as before
+(`sudo install -o sawt -g sawt -m 600 ~/env.production /opt/sawt/.env`, then edit it in place with
+real values), and remove the `ExecStartPre=` line from `sawt.service` so it doesn't overwrite your
+manual file on every start.
 
 ---
 
