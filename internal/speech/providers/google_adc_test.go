@@ -13,24 +13,35 @@ import (
 )
 
 type fakeSpeechAPI struct {
-	resp    *speechpb.RecognizeResponse
-	err     error
+	resp *speechpb.RecognizeResponse
+	err  error
+	// mu guards lastReq: the concurrency tests call Recognize from many
+	// goroutines at once, so the recording write must be synchronized. The
+	// single-threaded tests read lastReq sequentially after the call, so a
+	// plain field read there is race-free.
+	mu      sync.Mutex
 	lastReq *speechpb.RecognizeRequest
 }
 
 func (f *fakeSpeechAPI) Recognize(ctx context.Context, req *speechpb.RecognizeRequest, opts ...gax.CallOption) (*speechpb.RecognizeResponse, error) {
+	f.mu.Lock()
 	f.lastReq = req
+	f.mu.Unlock()
 	return f.resp, f.err
 }
 
 type fakeTTSAPI struct {
-	resp    *texttospeechpb.SynthesizeSpeechResponse
-	err     error
+	resp *texttospeechpb.SynthesizeSpeechResponse
+	err  error
+	// mu guards lastReq; see fakeSpeechAPI for the rationale.
+	mu      sync.Mutex
 	lastReq *texttospeechpb.SynthesizeSpeechRequest
 }
 
 func (f *fakeTTSAPI) SynthesizeSpeech(ctx context.Context, req *texttospeechpb.SynthesizeSpeechRequest, opts ...gax.CallOption) (*texttospeechpb.SynthesizeSpeechResponse, error) {
+	f.mu.Lock()
 	f.lastReq = req
+	f.mu.Unlock()
 	return f.resp, f.err
 }
 
