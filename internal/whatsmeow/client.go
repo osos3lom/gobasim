@@ -18,7 +18,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"go.mau.fi/whatsmeow"
-	"go.mau.fi/whatsmeow/binary/proto"
+	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
 	waLog "go.mau.fi/whatsmeow/util/log"
@@ -327,7 +327,7 @@ func (m *WhatsAppManager) StreamQRToState(ctx context.Context, qrChan <-chan wha
 }
 
 // SendTextMessage sends a plain-text WhatsApp message. Consolidates what
-// main.go's sendTextReply constructs inline (a *proto.Message with just the
+// main.go's sendTextReply constructs inline (a *waE2E.Message with just the
 // Conversation field set) into the one place every whatsmeow interaction is
 // meant to go through.
 func (m *WhatsAppManager) SendTextMessage(ctx context.Context, chatJID string, text string) error {
@@ -344,7 +344,7 @@ func (m *WhatsAppManager) SendTextMessage(ctx context.Context, chatJID string, t
 		return fmt.Errorf("invalid chat id %q: %w", chatJID, err)
 	}
 
-	msg := &proto.Message{Conversation: googleProto.String(text)}
+	msg := &waE2E.Message{Conversation: googleProto.String(text)}
 	if _, err := client.SendMessage(ctx, jid, msg); err != nil {
 		return fmt.Errorf("failed to send text message: %w", err)
 	}
@@ -376,8 +376,8 @@ func (m *WhatsAppManager) SendVoiceMessage(ctx context.Context, chatJID string, 
 		return fmt.Errorf("failed to upload voice note: %w", err)
 	}
 
-	msg := &proto.Message{
-		AudioMessage: &proto.AudioMessage{
+	msg := &waE2E.Message{
+		AudioMessage: &waE2E.AudioMessage{
 			URL:           googleProto.String(resp.URL),
 			DirectPath:    googleProto.String(resp.DirectPath),
 			MediaKey:      resp.MediaKey,

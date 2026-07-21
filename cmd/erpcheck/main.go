@@ -53,7 +53,7 @@ func main() {
 	switch {
 	case *uid != "" && *org != "":
 		actingUID, orgID, role = *uid, *org, "(provided)"
-		fmt.Printf("identity:    uid=%s org=%s (via flags)\n", actingUID, orgID)
+		fmt.Printf("identity:    uid=%s org=%s role=%s (via flags)\n", actingUID, orgID, role)
 	case *phone != "":
 		id, err := client.ResolveIdentity(ctx, *phone)
 		if err != nil {
@@ -144,7 +144,7 @@ func loadDotEnv(path string) {
 	if err != nil {
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
@@ -161,7 +161,7 @@ func loadDotEnv(path string) {
 			val = strings.TrimSpace(val[:i])
 		}
 		if key != "" {
-			os.Setenv(key, val)
+			_ = os.Setenv(key, val)
 		}
 	}
 }

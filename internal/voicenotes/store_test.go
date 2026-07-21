@@ -247,7 +247,7 @@ func TestMissingSpoolFileParksRowTerminally(t *testing.T) {
 
 	// Lose the spool file before the worker runs.
 	row := db.rows["MSG3-in"]
-	os.Remove(filepath.Join(s.spoolDir, filepath.Base(row.ObjectPath)))
+	_ = os.Remove(filepath.Join(s.spoolDir, filepath.Base(row.ObjectPath)))
 
 	s.processPending(context.Background())
 	if db.rows["MSG3-in"].Status != "failed" {

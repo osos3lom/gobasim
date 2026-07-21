@@ -228,7 +228,7 @@ func (s *Store) processOne(ctx context.Context, row database.WaVoiceNote) {
 	cancel()
 	// Close before any Remove: Windows refuses to delete a file with an open
 	// handle, and we no longer need the reader either way.
-	f.Close()
+	_ = f.Close()
 
 	if err != nil {
 		s.markFailed(ctx, row, err.Error(), maxAttempts)

@@ -98,7 +98,7 @@ func (p *GoogleProvider) Transcribe(ctx context.Context, wavBytes []byte, langua
 	if err != nil {
 		return "", fmt.Errorf("http request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -193,7 +193,7 @@ func (p *GoogleProvider) Synthesize(ctx context.Context, text string, language s
 	if err != nil {
 		return nil, fmt.Errorf("http request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {

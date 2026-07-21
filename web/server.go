@@ -350,7 +350,7 @@ func peerIP(r *http.Request) string {
 }
 
 func (s *Server) handlePostLogin(w http.ResponseWriter, r *http.Request) {
-	if allowed, _ := s.loginLimiter.Allow(clientIP(r)); !allowed {
+	if allowed, _ := s.loginLimiter.Allow(peerIP(r)); !allowed {
 		s.renderError(w, http.StatusTooManyRequests, "Too many login attempts — try again in a few minutes.")
 		return
 	}
@@ -864,7 +864,7 @@ func (s *Server) handlePostWhatsAppPairCode(w http.ResponseWriter, r *http.Reque
 // the dashboard requires a confirmation dialog before submitting this.
 func (s *Server) handlePostWhatsAppLogout(w http.ResponseWriter, r *http.Request) {
 	if err := s.waMgr.Logout(r.Context()); err != nil {
-		w.Write([]byte(fmt.Sprintf("<div class='bg-red-900 border border-red-500 text-red-200 px-4 py-3 rounded'>Logout failed: %v</div>", err)))
+		_, _ = fmt.Fprintf(w, "<div class='bg-red-900 border border-red-500 text-red-200 px-4 py-3 rounded'>Logout failed: %v</div>", err)
 		return
 	}
 	s.renderWhatsAppCard(w, r, nil)
@@ -876,11 +876,11 @@ func (s *Server) handlePostWhatsAppLogout(w http.ResponseWriter, r *http.Request
 func (s *Server) handlePostWhatsAppRepair(w http.ResponseWriter, r *http.Request) {
 	qrChan, err := s.waMgr.RearmQR(r.Context())
 	if err != nil {
-		w.Write([]byte(fmt.Sprintf("<div class='bg-red-900 border border-red-500 text-red-200 px-4 py-3 rounded'>Could not start a new pairing session: %v</div>", err)))
+		_, _ = fmt.Fprintf(w, "<div class='bg-red-900 border border-red-500 text-red-200 px-4 py-3 rounded'>Could not start a new pairing session: %v</div>", err)
 		return
 	}
 	if err := s.waMgr.Connect(r.Context()); err != nil {
-		w.Write([]byte(fmt.Sprintf("<div class='bg-red-900 border border-red-500 text-red-200 px-4 py-3 rounded'>Failed to reconnect: %v</div>", err)))
+		_, _ = fmt.Fprintf(w, "<div class='bg-red-900 border border-red-500 text-red-200 px-4 py-3 rounded'>Failed to reconnect: %v</div>", err)
 		return
 	}
 	// A background context: the request's context is canceled once this
@@ -1293,7 +1293,7 @@ func validatePublishTransition(requestedStatus, systemPrompt string) string {
 
 // feedbackErr writes the red HTMX #feedback snippet with an escaped reason.
 func feedbackErr(w http.ResponseWriter, reason string) {
-	w.Write([]byte(fmt.Sprintf("<div class='bg-red-900 border border-red-500 text-red-200 px-4 py-3 rounded'>%s</div>", template.HTMLEscapeString(reason))))
+	_, _ = fmt.Fprintf(w, "<div class='bg-red-900 border border-red-500 text-red-200 px-4 py-3 rounded'>%s</div>", template.HTMLEscapeString(reason))
 }
 
 // formBool reads an HTML checkbox: present (any non-empty value) means checked.
@@ -1328,7 +1328,7 @@ func (s *Server) handlePostUpdateWorkflow(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	w.Write([]byte("<div class='bg-emerald-900 border border-emerald-500 text-emerald-200 px-4 py-3 rounded'>Workflow updated successfully!</div>"))
+	_, _ = w.Write([]byte("<div class='bg-emerald-900 border border-emerald-500 text-emerald-200 px-4 py-3 rounded'>Workflow updated successfully!</div>"))
 }
 
 // buildUpdateParams parses and validates the four-block workflow form into a
@@ -1491,7 +1491,7 @@ func (s *Server) handleSSELogs(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case line := <-logChan:
-			fmt.Fprintf(w, "data: %s\n\n", line)
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", line)
 			flusher.Flush()
 		case <-r.Context().Done():
 			return
@@ -1658,5 +1658,5 @@ func (s *Server) handlePostWhatsAppSettings(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	w.Write([]byte("<div class='bg-emerald-900 border border-emerald-500 text-emerald-200 px-4 py-3 rounded'>System defaults saved successfully!</div>"))
+	_, _ = w.Write([]byte("<div class='bg-emerald-900 border border-emerald-500 text-emerald-200 px-4 py-3 rounded'>System defaults saved successfully!</div>"))
 }

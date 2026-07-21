@@ -21,7 +21,7 @@ func TestLiveGoogleADCTranscribe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to construct GoogleADCProvider: %v", err)
 	}
-	defer p.Close()
+	defer func() { _ = p.Close() }()
 
 	text, err := p.Transcribe(ctx, loadTestdataWAV(t, "tiny_16k_mono.wav"), "ar")
 	if err != nil {
@@ -43,7 +43,7 @@ func TestLiveGoogleADCSynthesize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to construct GoogleADCProvider: %v", err)
 	}
-	defer p.Close()
+	defer func() { _ = p.Close() }()
 
 	audio, err := p.Synthesize(ctx, "مرحبا", "ar")
 	if err != nil {

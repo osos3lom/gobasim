@@ -24,7 +24,7 @@ func loadDotEnv(path string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
@@ -43,7 +43,7 @@ func loadDotEnv(path string) error {
 			val = strings.TrimSpace(val[:i])
 		}
 		if key != "" {
-			os.Setenv(key, val)
+			_ = os.Setenv(key, val)
 		}
 	}
 	return sc.Err()
@@ -72,11 +72,11 @@ func main() {
 
 	// Override port for the harness if not set, or default to 8091 to avoid collision with standard runs
 	if os.Getenv("PORT") == "" {
-		os.Setenv("PORT", "8091")
+		_ = os.Setenv("PORT", "8091")
 	}
 
 	// Disable secure cookies for local HTTP testing in the harness
-	os.Setenv("SECURE_COOKIE", "false")
+	_ = os.Setenv("SECURE_COOKIE", "false")
 
 	cfg := config.LoadConfig()
 	if cfg.DatabaseURL == "" {

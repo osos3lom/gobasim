@@ -82,7 +82,7 @@ func TestResolveIdentityCaching(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{
+		_, _ = w.Write([]byte(`{
 			"resolved": true,
 			"identity": {
 				"uid": "user123",
@@ -96,7 +96,7 @@ func TestResolveIdentityCaching(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(server.URL, "test-secret")
-	
+
 	// First call - should hit the server
 	id1, err := client.ResolveIdentity(t.Context(), "966500000000")
 	if err != nil {

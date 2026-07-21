@@ -45,7 +45,7 @@ func (p *LocalProvider) Transcribe(ctx context.Context, wavBytes []byte, languag
 	if err := os.WriteFile(tmpWav, wavBytes, 0600); err != nil {
 		return "", fmt.Errorf("failed to create temporary audio file: %w", err)
 	}
-	defer os.Remove(tmpWav) // Ensure clean up
+	defer func() { _ = os.Remove(tmpWav) }() // Ensure clean up
 
 	// 2. Build the command. whisper.cpp CLI arguments:
 	// -m <model> -f <input-file> -l <lang> --no-timestamps --threads 2
@@ -120,7 +120,7 @@ func (p *LocalProvider) Synthesize(ctx context.Context, text string, language st
 	if err != nil {
 		return nil, fmt.Errorf("local gTTS HTTP request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBytes, _ := io.ReadAll(resp.Body)

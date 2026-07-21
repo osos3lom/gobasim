@@ -20,13 +20,13 @@ func TestGoogleTranscribe_Success(t *testing.T) {
 		}
 		var body map[string]interface{}
 		b, _ := io.ReadAll(r.Body)
-		json.Unmarshal(b, &body)
+		_ = json.Unmarshal(b, &body)
 		cfg := body["config"].(map[string]interface{})
 		if cfg["encoding"] != "LINEAR16" || cfg["sampleRateHertz"] != float64(16000) {
 			t.Errorf("unexpected config: %+v", cfg)
 		}
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"results":[{"alternatives":[{"transcript":"مرحبا"}]}]}`))
+		_, _ = w.Write([]byte(`{"results":[{"alternatives":[{"transcript":"مرحبا"}]}]}`))
 	}))
 	defer srv.Close()
 
@@ -43,7 +43,7 @@ func TestGoogleTranscribe_Success(t *testing.T) {
 func TestGoogleTranscribe_NoResultsIsNotAnError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"results":[]}`))
+		_, _ = w.Write([]byte(`{"results":[]}`))
 	}))
 	defer srv.Close()
 
@@ -68,7 +68,7 @@ func TestGoogleTranscribe_MissingAPIKey(t *testing.T) {
 func TestGoogleTranscribe_ServerError5xx(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte(`{"error":{"code":503,"message":"backend unavailable"}}`))
+		_, _ = w.Write([]byte(`{"error":{"code":503,"message":"backend unavailable"}}`))
 	}))
 	defer srv.Close()
 
@@ -86,7 +86,7 @@ func TestGoogleTranscribe_NetworkTimeout(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(200 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"results":[]}`))
+		_, _ = w.Write([]byte(`{"results":[]}`))
 	}))
 	defer srv.Close()
 
@@ -115,7 +115,7 @@ func TestGoogleTranscribe_NetworkTimeout(t *testing.T) {
 func TestGoogleTranscribe_EmptyAudio(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`{"error":{"code":400,"message":"audio content is empty"}}`))
+		_, _ = w.Write([]byte(`{"error":{"code":400,"message":"audio content is empty"}}`))
 	}))
 	defer srv.Close()
 
@@ -129,7 +129,7 @@ func TestGoogleTranscribe_EmptyAudio(t *testing.T) {
 func TestGoogleTranscribe_MalformedAudioPayload(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`{"error":{"code":400,"message":"invalid encoding"}}`))
+		_, _ = w.Write([]byte(`{"error":{"code":400,"message":"invalid encoding"}}`))
 	}))
 	defer srv.Close()
 
@@ -143,7 +143,7 @@ func TestGoogleTranscribe_MalformedAudioPayload(t *testing.T) {
 func TestGoogleTranscribe_RateLimited429(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusTooManyRequests)
-		w.Write([]byte(`{"error":{"code":429,"message":"quota exceeded"}}`))
+		_, _ = w.Write([]byte(`{"error":{"code":429,"message":"quota exceeded"}}`))
 	}))
 	defer srv.Close()
 
@@ -157,7 +157,7 @@ func TestGoogleTranscribe_RateLimited429(t *testing.T) {
 func TestGoogleTranscribe_OversizedPayload413(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusRequestEntityTooLarge)
-		w.Write([]byte(`{"error":{"code":413,"message":"request too large"}}`))
+		_, _ = w.Write([]byte(`{"error":{"code":413,"message":"request too large"}}`))
 	}))
 	defer srv.Close()
 
@@ -171,7 +171,7 @@ func TestGoogleTranscribe_OversizedPayload413(t *testing.T) {
 func TestGoogleTranscribe_ConcurrentRequestsAreRaceFree(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"results":[{"alternatives":[{"transcript":"ok"}]}]}`))
+		_, _ = w.Write([]byte(`{"results":[{"alternatives":[{"transcript":"ok"}]}]}`))
 	}))
 	defer srv.Close()
 
@@ -200,7 +200,7 @@ func TestGoogleTranscribe_ConcurrentRequestsAreRaceFree(t *testing.T) {
 func TestGoogleSynthesize_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"audioContent":"aGVsbG8="}`))
+		_, _ = w.Write([]byte(`{"audioContent":"aGVsbG8="}`))
 	}))
 	defer srv.Close()
 
@@ -225,7 +225,7 @@ func TestGoogleSynthesize_MissingAPIKey(t *testing.T) {
 func TestGoogleSynthesize_MalformedBase64(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"audioContent":"not-valid-base64!!"}`))
+		_, _ = w.Write([]byte(`{"audioContent":"not-valid-base64!!"}`))
 	}))
 	defer srv.Close()
 
@@ -239,7 +239,7 @@ func TestGoogleSynthesize_MalformedBase64(t *testing.T) {
 func TestGoogleSynthesize_RateLimited429(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusTooManyRequests)
-		w.Write([]byte(`{"error":{"code":429,"message":"quota exceeded"}}`))
+		_, _ = w.Write([]byte(`{"error":{"code":429,"message":"quota exceeded"}}`))
 	}))
 	defer srv.Close()
 
@@ -254,9 +254,9 @@ func TestGoogleSynthesize_EmptyText(t *testing.T) {
 	var gotPayload map[string]interface{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
-		json.Unmarshal(b, &gotPayload)
+		_ = json.Unmarshal(b, &gotPayload)
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`{"error":{"code":400,"message":"text is empty"}}`))
+		_, _ = w.Write([]byte(`{"error":{"code":400,"message":"text is empty"}}`))
 	}))
 	defer srv.Close()
 
@@ -274,7 +274,7 @@ func TestGoogleSynthesize_EmptyText(t *testing.T) {
 func TestGoogleSynthesize_NonUTF8Text(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"audioContent":"aGVsbG8="}`))
+		_, _ = w.Write([]byte(`{"audioContent":"aGVsbG8="}`))
 	}))
 	defer srv.Close()
 
@@ -287,7 +287,7 @@ func TestGoogleSynthesize_NonUTF8Text(t *testing.T) {
 func TestGoogleSynthesize_ConcurrentRequestsAreRaceFree(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"audioContent":"aGVsbG8="}`))
+		_, _ = w.Write([]byte(`{"audioContent":"aGVsbG8="}`))
 	}))
 	defer srv.Close()
 
@@ -316,9 +316,9 @@ func TestGoogleSynthesize_PerAgentVoice(t *testing.T) {
 	var gotPayload map[string]interface{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
-		json.Unmarshal(b, &gotPayload)
+		_ = json.Unmarshal(b, &gotPayload)
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"audioContent":"aGVsbG8="}`))
+		_, _ = w.Write([]byte(`{"audioContent":"aGVsbG8="}`))
 	}))
 	defer srv.Close()
 
@@ -353,4 +353,3 @@ func TestGoogleSynthesize_PerAgentVoice(t *testing.T) {
 		t.Errorf("expected speakingRate 1.2, got %v", audioConfig["speakingRate"])
 	}
 }
-

@@ -89,7 +89,7 @@ func (p *HuggingFaceProvider) Transcribe(ctx context.Context, wavBytes []byte, l
 	if err != nil {
 		return "", fmt.Errorf("http request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -146,7 +146,7 @@ func (p *HuggingFaceProvider) Synthesize(ctx context.Context, text string, langu
 	if err != nil {
 		return nil, fmt.Errorf("http request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {

@@ -20,7 +20,7 @@ func TestGoogleSynthesize_HonorsAgentVoice(t *testing.T) {
 		b, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(b, &got)
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"audioContent":"aGVsbG8="}`))
+		_, _ = w.Write([]byte(`{"audioContent":"aGVsbG8="}`))
 	}))
 	defer srv.Close()
 

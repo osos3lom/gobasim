@@ -36,7 +36,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/mdp/qrterminal/v3"
 	"go.mau.fi/whatsmeow"
-	"go.mau.fi/whatsmeow/binary/proto"
+	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	"golang.org/x/crypto/bcrypt"
@@ -878,8 +878,8 @@ func handleIncomingMessage(
 				}
 			}
 
-			audioMsg := &proto.Message{
-				AudioMessage: &proto.AudioMessage{
+			audioMsg := &waE2E.Message{
+				AudioMessage: &waE2E.AudioMessage{
 					URL:           googleProto.String(resp.URL),
 					DirectPath:    googleProto.String(resp.DirectPath),
 					MediaKey:      resp.MediaKey,
@@ -966,7 +966,7 @@ func handleIncomingMessage(
 }
 
 func sendTextReply(ctx context.Context, client *whatsmeow.Client, chat types.JID, text string) {
-	textMsg := &proto.Message{
+	textMsg := &waE2E.Message{
 		Conversation: googleProto.String(text),
 	}
 	_, err := client.SendMessage(context.Background(), chat, textMsg)

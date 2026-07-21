@@ -137,7 +137,7 @@ func (c *Client) doSignedPOST(ctx context.Context, url string, bodyBytes []byte,
 			continue // transport error — retry
 		}
 		respBytes, readErr := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if readErr != nil {
 			lastErr = fmt.Errorf("failed to read response: %w", readErr)
 			continue

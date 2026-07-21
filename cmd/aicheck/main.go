@@ -253,7 +253,7 @@ func checkGoogleADCSTT(ctx context.Context) checkResult {
 		r.Detail = truncate(err.Error())
 		return r
 	}
-	defer p.Close()
+	defer func() { _ = p.Close() }()
 	var text string
 	r.Elapsed, err = timeIt(func() error {
 		var terr error
@@ -281,7 +281,7 @@ func checkGoogleADCTTS(ctx context.Context) checkResult {
 		r.Detail = truncate(err.Error())
 		return r
 	}
-	defer p.Close()
+	defer func() { _ = p.Close() }()
 	var audio []byte
 	r.Elapsed, err = timeIt(func() error {
 		var terr error
@@ -414,7 +414,7 @@ func loadDotEnv(path string) {
 	if err != nil {
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
@@ -431,7 +431,7 @@ func loadDotEnv(path string) {
 			val = strings.TrimSpace(val[:i])
 		}
 		if key != "" {
-			os.Setenv(key, val)
+			_ = os.Setenv(key, val)
 		}
 	}
 }

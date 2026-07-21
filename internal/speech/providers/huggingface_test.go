@@ -27,7 +27,7 @@ func TestHuggingFaceTranscribe_Success(t *testing.T) {
 			t.Errorf("unexpected Authorization header: %q", got)
 		}
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"text":"مرحبا بالعالم"}`))
+		_, _ = w.Write([]byte(`{"text":"مرحبا بالعالم"}`))
 	}))
 	defer srv.Close()
 
@@ -52,7 +52,7 @@ func TestHuggingFaceTranscribe_MissingAPIKey(t *testing.T) {
 func TestHuggingFaceTranscribe_ModelLoading503(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte(`{"error":"Model openai/whisper-large-v3 is currently loading","estimated_time":20.0}`))
+		_, _ = w.Write([]byte(`{"error":"Model openai/whisper-large-v3 is currently loading","estimated_time":20.0}`))
 	}))
 	defer srv.Close()
 
@@ -70,7 +70,7 @@ func TestHuggingFaceTranscribe_NetworkTimeout(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(200 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"text":"too late"}`))
+		_, _ = w.Write([]byte(`{"text":"too late"}`))
 	}))
 	defer srv.Close()
 
@@ -101,7 +101,7 @@ func TestHuggingFaceTranscribe_EmptyAudio(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotBodyLen = int(r.ContentLength)
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`{"error":"audio content is empty"}`))
+		_, _ = w.Write([]byte(`{"error":"audio content is empty"}`))
 	}))
 	defer srv.Close()
 
@@ -118,7 +118,7 @@ func TestHuggingFaceTranscribe_EmptyAudio(t *testing.T) {
 func TestHuggingFaceTranscribe_MalformedAudioPayload(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`{"error":"could not decode audio: unsupported format"}`))
+		_, _ = w.Write([]byte(`{"error":"could not decode audio: unsupported format"}`))
 	}))
 	defer srv.Close()
 
@@ -136,7 +136,7 @@ func TestHuggingFaceTranscribe_RateLimited429(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Retry-After", "2")
 		w.WriteHeader(http.StatusTooManyRequests)
-		w.Write([]byte(`{"error":"rate limit exceeded"}`))
+		_, _ = w.Write([]byte(`{"error":"rate limit exceeded"}`))
 	}))
 	defer srv.Close()
 
@@ -153,7 +153,7 @@ func TestHuggingFaceTranscribe_RateLimited429(t *testing.T) {
 func TestHuggingFaceTranscribe_OversizedPayload413(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusRequestEntityTooLarge)
-		w.Write([]byte(`{"error":"payload too large"}`))
+		_, _ = w.Write([]byte(`{"error":"payload too large"}`))
 	}))
 	defer srv.Close()
 
@@ -170,7 +170,7 @@ func TestHuggingFaceTranscribe_OversizedPayload413(t *testing.T) {
 func TestHuggingFaceTranscribe_ConcurrentRequestsAreRaceFree(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"text":"ok"}`))
+		_, _ = w.Write([]byte(`{"text":"ok"}`))
 	}))
 	defer srv.Close()
 
@@ -199,7 +199,7 @@ func TestHuggingFaceTranscribe_ConcurrentRequestsAreRaceFree(t *testing.T) {
 func TestHuggingFaceSynthesize_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"data":[{"name":"audio.wav","data":"data:audio/wav;base64,aGVsbG8="}],"duration":0.5}`))
+		_, _ = w.Write([]byte(`{"data":[{"name":"audio.wav","data":"data:audio/wav;base64,aGVsbG8="}],"duration":0.5}`))
 	}))
 	defer srv.Close()
 
@@ -219,7 +219,7 @@ func TestHuggingFaceSynthesize_NoAPIKeyStillWorks(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"data":[{"name":"audio.wav","data":"data:audio/wav;base64,aGVsbG8="}]}`))
+		_, _ = w.Write([]byte(`{"data":[{"name":"audio.wav","data":"data:audio/wav;base64,aGVsbG8="}]}`))
 	}))
 	defer srv.Close()
 
@@ -235,7 +235,7 @@ func TestHuggingFaceSynthesize_NoAPIKeyStillWorks(t *testing.T) {
 func TestHuggingFaceSynthesize_MalformedBase64(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"data":[{"name":"audio.wav","data":"data:audio/wav;base64,not-valid-base64!!"}]}`))
+		_, _ = w.Write([]byte(`{"data":[{"name":"audio.wav","data":"data:audio/wav;base64,not-valid-base64!!"}]}`))
 	}))
 	defer srv.Close()
 
@@ -249,7 +249,7 @@ func TestHuggingFaceSynthesize_MalformedBase64(t *testing.T) {
 func TestHuggingFaceSynthesize_EmptyGradioData(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"data":[]}`))
+		_, _ = w.Write([]byte(`{"data":[]}`))
 	}))
 	defer srv.Close()
 
@@ -263,7 +263,7 @@ func TestHuggingFaceSynthesize_EmptyGradioData(t *testing.T) {
 func TestHuggingFaceSynthesize_RateLimited429(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusTooManyRequests)
-		w.Write([]byte(`{"error":"rate limited"}`))
+		_, _ = w.Write([]byte(`{"error":"rate limited"}`))
 	}))
 	defer srv.Close()
 
@@ -280,7 +280,7 @@ func TestHuggingFaceSynthesize_EmptyText(t *testing.T) {
 		buf, _ := io.ReadAll(r.Body)
 		gotPayload = string(buf)
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`{"error":"text is empty"}`))
+		_, _ = w.Write([]byte(`{"error":"text is empty"}`))
 	}))
 	defer srv.Close()
 
@@ -297,7 +297,7 @@ func TestHuggingFaceSynthesize_EmptyText(t *testing.T) {
 func TestHuggingFaceSynthesize_NonUTF8Text(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"data":[{"name":"audio.wav","data":"data:audio/wav;base64,aGVsbG8="}]}`))
+		_, _ = w.Write([]byte(`{"data":[{"name":"audio.wav","data":"data:audio/wav;base64,aGVsbG8="}]}`))
 	}))
 	defer srv.Close()
 
@@ -312,7 +312,7 @@ func TestHuggingFaceSynthesize_NonUTF8Text(t *testing.T) {
 func TestHuggingFaceSynthesize_ConcurrentRequestsAreRaceFree(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"data":[{"name":"audio.wav","data":"data:audio/wav;base64,aGVsbG8="}]}`))
+		_, _ = w.Write([]byte(`{"data":[{"name":"audio.wav","data":"data:audio/wav;base64,aGVsbG8="}]}`))
 	}))
 	defer srv.Close()
 

@@ -22,10 +22,10 @@ func stubServer(t *testing.T, results map[string]string) *httptest.Server {
 		res, ok := results[req.Method]
 		w.Header().Set("Content-Type", "application/json")
 		if !ok {
-			w.Write([]byte(`{"jsonrpc":"2.0","id":` + itoa(req.ID) + `,"error":{"code":-32601,"message":"method not found"}}`))
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":` + itoa(req.ID) + `,"error":{"code":-32601,"message":"method not found"}}`))
 			return
 		}
-		w.Write([]byte(`{"jsonrpc":"2.0","id":` + itoa(req.ID) + `,"result":` + res + `}`))
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":` + itoa(req.ID) + `,"result":` + res + `}`))
 	}))
 }
 

@@ -105,7 +105,7 @@ func (c *Client) call(ctx context.Context, method string, params interface{}) (j
 	if err != nil {
 		return nil, fmt.Errorf("mcp: %s request failed: %w", method, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("mcp: %s returned HTTP %d", method, resp.StatusCode)
 	}

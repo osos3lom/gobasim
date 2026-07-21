@@ -89,6 +89,6 @@ func dispatch(r report) {
 			log.Printf("Monitor: failed to post error report: %v", err)
 			return
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	}()
 }

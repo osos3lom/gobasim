@@ -48,8 +48,8 @@ func WavToOpus(inputAudioBytes []byte) ([]byte, error) {
 		return nil, fmt.Errorf("failed to create temporary file for audio transcode: %w", err)
 	}
 	tmpPath := tmpFile.Name()
-	tmpFile.Close() // Close it so ffmpeg can overwrite it
-	defer os.Remove(tmpPath) // Clean up
+	_ = tmpFile.Close()                       // Close it so ffmpeg can overwrite it
+	defer func() { _ = os.Remove(tmpPath) }() // Clean up
 
 	cmd := exec.Command(
 		"ffmpeg",

@@ -1,3 +1,5 @@
+version: "2"
+
 linters:
   enable:
     - errcheck
@@ -5,7 +7,6 @@ linters:
     - staticcheck
     - unused
     - ineffassign
-    - gosimple
 
 run:
   timeout: 5m

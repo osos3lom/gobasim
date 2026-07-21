@@ -294,7 +294,7 @@ func (e *WorkflowEngine) callProvider(ctx context.Context, p llmProvider, messag
 	if err != nil {
 		return nil, fmt.Errorf("http request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {

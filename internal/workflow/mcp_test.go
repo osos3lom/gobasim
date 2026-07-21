@@ -35,10 +35,10 @@ func mcpStub(t *testing.T) *httptest.Server {
 		case "tools/call":
 			result = `{"ok":true,"content":"done"}`
 		default:
-			w.Write([]byte(`{"jsonrpc":"2.0","id":` + id + `,"error":{"code":-32601,"message":"nope"}}`))
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":` + id + `,"error":{"code":-32601,"message":"nope"}}`))
 			return
 		}
-		w.Write([]byte(`{"jsonrpc":"2.0","id":` + id + `,"result":` + result + `}`))
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":` + id + `,"result":` + result + `}`))
 	}))
 }
 
