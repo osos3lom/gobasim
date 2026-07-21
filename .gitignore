@@ -15,6 +15,9 @@ node_modules/
 # Runtime artifacts (voice-note spool dir)
 voice-spool/
 
+# Test coverage output
+coverage.out
+
 # Editor/OS noise
 .DS_Store
 Thumbs.db
