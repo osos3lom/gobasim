@@ -3,6 +3,7 @@ package main
 import (
 	"testing"
 
+	"sawt-go/internal/gateway"
 	"sawt-go/web"
 )
 
@@ -17,16 +18,16 @@ func TestNewContactParamsDefaultsDisabled(t *testing.T) {
 		wantName string
 	}{
 		{"with push name", "966500000001@s.whatsapp.net", "Abu Khalid", "Abu Khalid"},
-		{"falls back to phone", "966500000001@s.whatsapp.net", "", "966500000001"},
+		{"falls back to phone", "966500000001@s.whatsapp.net", "", "+966500000001"},
 		// A LID chat_id's digits are an opaque WhatsApp id, not a phone
 		// number — falling back to them as the contact's name would leak
 		// that format into the dashboard (the operator-facing name field is
 		// shown unconditionally, unlike waDisplayPhone's chat_id fallback).
-		{"lid falls back to generic name, not lid digits", "90727124070644@lid", "", "New WhatsApp contact"},
+		{"lid falls back to generic name, not lid digits", "90727124070644@lid", "", "+90727124070644"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p := newContactParams(tt.chatJID, tt.pushName, web.BlueprintDefaults{})
+			p := gateway.NewContactParams(tt.chatJID, tt.pushName, web.BlueprintDefaults{})
 			if p.Enabled {
 				t.Fatal("auto-created contacts must default to disabled (explicit operator opt-in)")
 			}
@@ -53,7 +54,7 @@ func TestNewContactParamsBlueprintAutoEnable(t *testing.T) {
 		DefaultPromptOverride: "Prioritize breeding inquiries.",
 		AutoEnable:            true,
 	}
-	p := newContactParams("966500000002@s.whatsapp.net", "Layla", bp)
+	p := gateway.NewContactParams("966500000002@s.whatsapp.net", "Layla", bp)
 
 	if !p.Enabled {
 		t.Fatal("AutoEnable blueprint must create the contact enabled")
@@ -65,3 +66,4 @@ func TestNewContactParamsBlueprintAutoEnable(t *testing.T) {
 		t.Errorf("PromptOverride = %v, want the blueprint override", p.PromptOverride)
 	}
 }
+

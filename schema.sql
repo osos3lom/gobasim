@@ -1,7 +1,7 @@
 -- Sawt Platform Postgres Database Schema DDL
 
 CREATE TABLE IF NOT EXISTS settings (
-    id SERIAL PRIMARY KEY,
+    id SERIAL PRIMARY KEY CHECK (id = 1),
     tts_model TEXT NOT NULL DEFAULT 'habibi',
     model_ids JSONB NOT NULL DEFAULT '{"habibi":"habibi-tts","silma":"silma-tts","whisper":"openai/whisper-large-v3"}'::jsonb,
     default_speed REAL NOT NULL DEFAULT 1.0,
@@ -26,15 +26,6 @@ CREATE TABLE IF NOT EXISTS stt_history (
     filename TEXT NOT NULL,
     duration_ms INTEGER NOT NULL,
     language TEXT NOT NULL DEFAULT 'ar'
-);
-
-CREATE TABLE IF NOT EXISTS webhook_logs (
-    id TEXT PRIMARY KEY,
-    type TEXT NOT NULL,
-    ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    status INTEGER NOT NULL,
-    input_preview TEXT NOT NULL DEFAULT '',
-    duration_ms INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS agents (
@@ -72,51 +63,6 @@ ALTER TABLE agents ADD COLUMN IF NOT EXISTS
 -- existed. An empty object is a no-op override layer (see agentcfg.ParseClarificationRules).
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS clarification_rules JSONB NOT NULL DEFAULT '{}'::jsonb;
 
--- PromptOps foundation: prompts become versioned modules composed into a stack.
--- Phase 1 keeps agents.system_prompt as the backwards-compatible override, while
--- these tables provide the first modular prompt source for compiled contexts.
-CREATE TABLE IF NOT EXISTS prompt_modules (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    type TEXT NOT NULL, -- system | domain | agent | task | tool | guardrail | localization | output
-    status TEXT NOT NULL DEFAULT 'active',
-    owner_team TEXT NOT NULL DEFAULT '',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS prompt_module_versions (
-    id TEXT PRIMARY KEY,
-    module_id TEXT NOT NULL REFERENCES prompt_modules(id) ON DELETE CASCADE,
-    version INTEGER NOT NULL,
-    body TEXT NOT NULL,
-    hash TEXT NOT NULL,
-    changelog TEXT NOT NULL DEFAULT '',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE (module_id, version)
-);
-
-CREATE TABLE IF NOT EXISTS prompt_stacks (
-    id TEXT PRIMARY KEY,
-    agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
-    name TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'active',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE (agent_id, status)
-);
-
-CREATE TABLE IF NOT EXISTS prompt_stack_modules (
-    stack_id TEXT NOT NULL REFERENCES prompt_stacks(id) ON DELETE CASCADE,
-    module_version_id TEXT NOT NULL REFERENCES prompt_module_versions(id) ON DELETE CASCADE,
-    order_index INTEGER NOT NULL,
-    condition_expr TEXT NOT NULL DEFAULT '',
-    PRIMARY KEY (stack_id, module_version_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_prompt_stacks_agent ON prompt_stacks (agent_id, status);
-CREATE INDEX IF NOT EXISTS idx_prompt_stack_modules_order ON prompt_stack_modules (stack_id, order_index);
-
 CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
     username VARCHAR(100) UNIQUE NOT NULL,
@@ -124,11 +70,6 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS health_check (
-    id SERIAL PRIMARY KEY,
-    note TEXT NOT NULL DEFAULT 'ok',
-    checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
 
 CREATE TABLE IF NOT EXISTS wa_contacts (
     chat_id TEXT PRIMARY KEY,

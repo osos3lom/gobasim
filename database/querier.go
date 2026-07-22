@@ -28,7 +28,6 @@ type Querier interface {
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	CreateWaActivity(ctx context.Context, arg CreateWaActivityParams) error
 	CreateWaMessage(ctx context.Context, arg CreateWaMessageParams) error
-	CreateWebhookLog(ctx context.Context, arg CreateWebhookLogParams) error
 	DeletePendingConfirmation(ctx context.Context, chatID string) error
 	GetAgent(ctx context.Context, id string) (Agent, error)
 	GetConversationState(ctx context.Context, chatID string) (ConversationState, error)
@@ -68,12 +67,12 @@ type Querier interface {
 	// now edits the full five-block config, so every operator-editable column is set.
 	UpdateAgentWorkflow(ctx context.Context, arg UpdateAgentWorkflowParams) (Agent, error)
 	UpdateSettings(ctx context.Context, arg UpdateSettingsParams) error
-	// UpdateWaContactErpLink persists the outcome of resolving a contact's
-	// phone against the ERP (see internal/erp.Client.ResolveIdentity).
+	// Persists the outcome of resolving this contact's phone against the ERP
+	// (see internal/erp.Client.ResolveIdentity). erp_unresolved_reason is set
+	// when resolution didn't produce an identity, and cleared otherwise.
 	UpdateWaContactErpLink(ctx context.Context, arg UpdateWaContactErpLinkParams) (WaContact, error)
-	// UpdateWaContactErpOverride sets (or clears) the phone number an
-	// operator wants used for ERP identity resolution instead of the one
-	// derived from the WhatsApp chat_id.
+	// Sets (or clears, with an empty string) the phone number an operator wants
+	// used for ERP identity resolution instead of the one derived from chat_id.
 	UpdateWaContactErpOverride(ctx context.Context, arg UpdateWaContactErpOverrideParams) (WaContact, error)
 	UpdateWaContactSettings(ctx context.Context, arg UpdateWaContactSettingsParams) (WaContact, error)
 	// UpsertCollecting parks a tool call that is still missing required args
@@ -81,6 +80,9 @@ type Querier interface {
 	// with status='collecting' and the extra slot-filling columns populated.
 	UpsertCollecting(ctx context.Context, arg UpsertCollectingParams) error
 	UpsertConversationState(ctx context.Context, arg UpsertConversationStateParams) error
+	// Also resets missing_fields/collect_rounds/intent to their defaults on
+	// conflict, so a completed 'collecting' row that graduates into an ordinary
+	// confirmation (F-1 fix) doesn't carry stale slot-filling state forward.
 	UpsertPendingConfirmation(ctx context.Context, arg UpsertPendingConfirmationParams) error
 	// Voice-note archive (Firebase Cloud Storage ledger) ------------------------
 	// ON CONFLICT DO NOTHING makes enqueueing idempotent: re-processing the same

@@ -66,19 +66,14 @@ func ResolveAndPersistContactIdentity(ctx context.Context, client *Client, queri
 		}
 	}
 
-	// Persist a LID phone the moment it's discovered, independent of whether
-	// ERP recognizes it — so the dashboard can display the contact's real
-	// phone number (instead of the opaque LID digits) without needing a live
-	// whatsmeow lookup on every page render. Reuses erp_phone_override: once
-	// auto-discovered, it IS the phone this contact resolves against, same as
-	// an operator-entered override. Best-effort — a failure here only means
-	// the display falls back to LID digits until the next successful
-	// resolution; it must not fail the identity resolution itself.
-	if autoResolvedFromLID {
+	if hasOverride || autoResolvedFromLID {
+		phone = NormalizePhoneForERP(phone)
 		_, _ = queries.UpdateWaContactErpOverride(ctx, database.UpdateWaContactErpOverrideParams{
 			ChatID:           chatID,
 			ErpPhoneOverride: &phone,
 		})
+	} else {
+		phone = NormalizePhoneForERP(phone)
 	}
 
 	identity, err := client.ResolveIdentity(ctx, phone)
@@ -124,3 +119,15 @@ func fillIdentityParams(params *database.UpdateWaContactErpLinkParams, identity 
 		params.ErpOrgID = &orgID
 	}
 }
+
+// NormalizePhoneForERP normalizes Saudi local phone numbers (e.g. 0546906905)
+// into international format (966546906905) so ERP identity lookups against
+// Mshalia API match correctly.
+func NormalizePhoneForERP(phone string) string {
+	digits := strings.TrimPrefix(strings.TrimSpace(phone), "+")
+	if strings.HasPrefix(digits, "0") && len(digits) == 10 {
+		return "966" + digits[1:]
+	}
+	return digits
+}
+

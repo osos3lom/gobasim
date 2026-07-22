@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"sawt-go/config"
 )
 
 func TestNz(t *testing.T) {
@@ -26,7 +28,7 @@ func TestLoadDotEnv(t *testing.T) {
 	t.Setenv("MSHALIA_API_URL", "")
 	t.Setenv("AGENT_GATEWAY_SECRET", "")
 
-	loadDotEnv(path)
+	_ = config.LoadDotEnv(path)
 
 	if got := os.Getenv("MSHALIA_API_URL"); got != "http://localhost:3000" {
 		t.Errorf("MSHALIA_API_URL = %q", got)
@@ -37,5 +39,6 @@ func TestLoadDotEnv(t *testing.T) {
 }
 
 func TestLoadDotEnv_MissingFileIsNoop(t *testing.T) {
-	loadDotEnv(filepath.Join(t.TempDir(), "missing.env"))
+	_ = config.LoadDotEnv(filepath.Join(t.TempDir(), "missing.env"))
 }
+

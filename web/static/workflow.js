@@ -1,16 +1,28 @@
-// workflow.js — CSP-clean list editors for the workflows control panel.
-//
-// Each element with class "js-list-editor" manages a repeatable list of rows
-// (Skills manifest, MCP server registry) and mirrors the current rows into a
-// hidden <input> as JSON on every change, so HTMX submits it like any field.
-//
-// Data attributes on the container:
-//   data-field   name of the hidden input (e.g. "skills" | "mcp_servers")
-//   data-init    JSON array of existing rows
-//   data-text    comma list of "key:Label" text columns
-//   data-bool    optional "key:Label" boolean (checkbox) column
+window.switchWfTab = function(tabName) {
+    var tabs = ["builder", "stream", "inspector"];
+    tabs.forEach(function(t) {
+        var panel = document.getElementById("wf-panel-" + t);
+        var btn = document.getElementById("wf-btn-" + t);
+        if (panel) {
+            if (t === tabName) {
+                panel.style.setProperty("display", "block", "important");
+            } else {
+                panel.style.setProperty("display", "none", "important");
+            }
+        }
+        if (btn) {
+            if (t === tabName) {
+                btn.className = "wf-tab-btn px-4 py-2 text-sm font-semibold rounded-t-xl transition duration-200 border-b-2 text-white bg-indigo-950/60 border-indigo-500";
+            } else {
+                btn.className = "wf-tab-btn px-4 py-2 text-sm font-semibold rounded-t-xl transition duration-200 border-b-2 border-transparent text-gray-400 hover:text-gray-200";
+            }
+        }
+    });
+};
+
 (function () {
   "use strict";
+
 
   function parseCols(spec) {
     if (!spec) return [];

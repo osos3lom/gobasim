@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"sawt-go/config"
 )
 
 func TestParseOnly(t *testing.T) {
@@ -95,7 +97,7 @@ func TestLoadDotEnv(t *testing.T) {
 	t.Setenv("BAZ", "")
 	t.Setenv("EMPTY", "")
 
-	loadDotEnv(path)
+	_ = config.LoadDotEnv(path)
 
 	if got := os.Getenv("FOO"); got != "bar" {
 		t.Errorf("FOO = %q, want bar", got)
@@ -107,5 +109,6 @@ func TestLoadDotEnv(t *testing.T) {
 
 func TestLoadDotEnv_MissingFileIsNoop(t *testing.T) {
 	// Should not panic when the file doesn't exist.
-	loadDotEnv(filepath.Join(t.TempDir(), "does-not-exist.env"))
+	_ = config.LoadDotEnv(filepath.Join(t.TempDir(), "does-not-exist.env"))
 }
+

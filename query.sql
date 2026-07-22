@@ -32,9 +32,6 @@ VALUES ($1, NOW(), $2, $3, $4, $5, $6);
 SELECT * FROM tts_history
 ORDER BY ts DESC LIMIT $1;
 
--- name: CreateWebhookLog :exec
-INSERT INTO webhook_logs (id, type, ts, status, input_preview, duration_ms)
-VALUES ($1, $2, NOW(), $3, $4, $5);
 
 -- name: GetAgent :one
 SELECT * FROM agents
@@ -82,49 +79,6 @@ SET name = $2, system_prompt = $3, greeting_message = $4, failure_message = $5,
 WHERE id = $1
 RETURNING *;
 
--- name: UpsertPromptModule :exec
-INSERT INTO prompt_modules (id, name, type, status, owner_team, updated_at)
-VALUES ($1, $2, $3, $4, $5, NOW())
-ON CONFLICT (id) DO UPDATE
-SET name = EXCLUDED.name, type = EXCLUDED.type, status = EXCLUDED.status,
-    owner_team = EXCLUDED.owner_team, updated_at = NOW();
-
--- name: UpsertPromptModuleVersion :exec
-INSERT INTO prompt_module_versions (id, module_id, version, body, hash, changelog)
-VALUES ($1, $2, $3, $4, $5, $6)
-ON CONFLICT (module_id, version) DO UPDATE
-SET body = EXCLUDED.body, hash = EXCLUDED.hash, changelog = EXCLUDED.changelog;
-
--- name: UpsertPromptStack :exec
-INSERT INTO prompt_stacks (id, agent_id, name, status, updated_at)
-VALUES ($1, $2, $3, $4, NOW())
-ON CONFLICT (id) DO UPDATE
-SET agent_id = EXCLUDED.agent_id, name = EXCLUDED.name, status = EXCLUDED.status, updated_at = NOW();
-
--- name: UpsertPromptStackModule :exec
-INSERT INTO prompt_stack_modules (stack_id, module_version_id, order_index, condition_expr)
-VALUES ($1, $2, $3, $4)
-ON CONFLICT (stack_id, module_version_id) DO UPDATE
-SET order_index = EXCLUDED.order_index, condition_expr = EXCLUDED.condition_expr;
-
--- name: ListPromptStackModulesByAgent :many
-SELECT
-    ps.id AS stack_id,
-    ps.name AS stack_name,
-    pm.id AS module_id,
-    pm.name AS module_name,
-    pm.type AS module_type,
-    pmv.id AS module_version_id,
-    pmv.version AS module_version,
-    pmv.body AS body,
-    pmv.hash AS hash,
-    psm.order_index AS order_index
-FROM prompt_stacks ps
-JOIN prompt_stack_modules psm ON psm.stack_id = ps.id
-JOIN prompt_module_versions pmv ON pmv.id = psm.module_version_id
-JOIN prompt_modules pm ON pm.id = pmv.module_id
-WHERE ps.agent_id = $1 AND ps.status = 'active' AND pm.status = 'active'
-ORDER BY psm.order_index ASC, pm.name ASC;
 
 -- name: GetWaContact :one
 SELECT * FROM wa_contacts

@@ -3,13 +3,11 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
-	"strings"
 
 	"sawt-go/config"
 	"sawt-go/database"
@@ -17,37 +15,6 @@ import (
 	waClient "sawt-go/internal/whatsmeow"
 	"sawt-go/web"
 )
-
-// loadDotEnv reads key=val pairs from a file and sets them in the environment.
-func loadDotEnv(path string) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
-
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		eq := strings.Index(line, "=")
-		if eq < 0 {
-			continue
-		}
-		key := strings.TrimSpace(line[:eq])
-		val := strings.TrimSpace(line[eq+1:])
-		// Strip trailing " # inline comment"
-		if i := strings.Index(val, " #"); i >= 0 {
-			val = strings.TrimSpace(val[:i])
-		}
-		if key != "" {
-			_ = os.Setenv(key, val)
-		}
-	}
-	return sc.Err()
-}
 
 // readSchemaFile attempts to locate schema.sql in likely directory paths.
 func readSchemaFile() (string, error) {
@@ -66,7 +33,7 @@ func main() {
 	log.Println("Starting Sawt Production readiness harness...")
 
 	// 1. Try to load .env configuration
-	if err := loadDotEnv(".env"); err != nil {
+	if err := config.LoadDotEnv(".env"); err != nil {
 		log.Printf("Notice: could not read .env: %v (will rely on environment variables)", err)
 	}
 

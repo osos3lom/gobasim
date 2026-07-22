@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"sawt-go/config"
 )
 
 func TestLoadDotEnv(t *testing.T) {
@@ -17,7 +19,7 @@ func TestLoadDotEnv(t *testing.T) {
 	t.Setenv("PORT", "")
 	t.Setenv("SECURE_COOKIE", "")
 
-	if err := loadDotEnv(path); err != nil {
+	if err := config.LoadDotEnv(path); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -30,7 +32,7 @@ func TestLoadDotEnv(t *testing.T) {
 }
 
 func TestLoadDotEnv_MissingFileReturnsError(t *testing.T) {
-	err := loadDotEnv(filepath.Join(t.TempDir(), "missing.env"))
+	err := config.LoadDotEnv(filepath.Join(t.TempDir(), "missing.env"))
 	if err == nil {
 		t.Fatal("expected an error for a missing .env file")
 	}

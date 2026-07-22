@@ -14,14 +14,11 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
-	"os"
-	"strings"
 	"time"
 
 	"sawt-go/config"
@@ -37,7 +34,7 @@ func main() {
 	name := flag.String("name", "", "name for the -add horse (default: auto-generated)")
 	flag.Parse()
 
-	loadDotEnv(*envFile)
+	_ = config.LoadDotEnv(*envFile)
 	cfg := config.LoadConfig()
 	if cfg.AgentGatewaySecret == "" {
 		log.Fatal("AGENT_GATEWAY_SECRET is not set — it must match mshalia's .env.local value")
@@ -138,30 +135,3 @@ func str(v interface{}) string {
 }
 
 func compact(v interface{}) string { b, _ := json.Marshal(v); return string(b) }
-
-func loadDotEnv(path string) {
-	f, err := os.Open(path)
-	if err != nil {
-		return
-	}
-	defer func() { _ = f.Close() }()
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		eq := strings.Index(line, "=")
-		if eq < 0 {
-			continue
-		}
-		key := strings.TrimSpace(line[:eq])
-		val := strings.TrimSpace(line[eq+1:])
-		if i := strings.Index(val, " #"); i >= 0 {
-			val = strings.TrimSpace(val[:i])
-		}
-		if key != "" {
-			_ = os.Setenv(key, val)
-		}
-	}
-}

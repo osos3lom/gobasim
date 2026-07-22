@@ -12,19 +12,18 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const claimPendingConfirmation = `-- name: ClaimPendingConfirmation :one
+const claimCollecting = `-- name: ClaimCollecting :one
 UPDATE pending_confirmations
-SET status = 'executing', claimed_at = NOW()
-WHERE chat_id = $1 AND status = 'pending'
+SET status = 'collecting_claimed', claimed_at = NOW()
+WHERE chat_id = $1 AND status = 'collecting'
 RETURNING chat_id, tool_id, args, org_id, acting_user_uid, description, status, claimed_at, created_at, expires_at, missing_fields, collect_rounds, intent
 `
 
-// ClaimPendingConfirmation atomically transitions a chat's pending row to
-// 'executing' and returns it. Because the UPDATE matches only status='pending',
-// exactly one of two concurrent resolvers wins the row; the loser gets no row.
-// This is the guard against double-executing a confirmed (financial) tool.
-func (q *Queries) ClaimPendingConfirmation(ctx context.Context, chatID string) (PendingConfirmation, error) {
-	row := q.db.QueryRow(ctx, claimPendingConfirmation, chatID)
+// ClaimCollecting mirrors ClaimPendingConfirmation exactly, atomically
+// transitioning 'collecting' -> 'collecting_claimed' so two concurrent
+// inbound messages for the same chat can't both resume the same round.
+func (q *Queries) ClaimCollecting(ctx context.Context, chatID string) (PendingConfirmation, error) {
+	row := q.db.QueryRow(ctx, claimCollecting, chatID)
 	var i PendingConfirmation
 	err := row.Scan(
 		&i.ChatID,
@@ -44,18 +43,19 @@ func (q *Queries) ClaimPendingConfirmation(ctx context.Context, chatID string) (
 	return i, err
 }
 
-const claimCollecting = `-- name: ClaimCollecting :one
+const claimPendingConfirmation = `-- name: ClaimPendingConfirmation :one
 UPDATE pending_confirmations
-SET status = 'collecting_claimed', claimed_at = NOW()
-WHERE chat_id = $1 AND status = 'collecting'
+SET status = 'executing', claimed_at = NOW()
+WHERE chat_id = $1 AND status = 'pending'
 RETURNING chat_id, tool_id, args, org_id, acting_user_uid, description, status, claimed_at, created_at, expires_at, missing_fields, collect_rounds, intent
 `
 
-// ClaimCollecting mirrors ClaimPendingConfirmation exactly, atomically
-// transitioning 'collecting' -> 'collecting_claimed' so two concurrent
-// inbound messages for the same chat can't both resume the same round.
-func (q *Queries) ClaimCollecting(ctx context.Context, chatID string) (PendingConfirmation, error) {
-	row := q.db.QueryRow(ctx, claimCollecting, chatID)
+// ClaimPendingConfirmation atomically transitions a chat's pending row to
+// 'executing' and returns it. Because the UPDATE matches only status='pending',
+// exactly one of two concurrent resolvers wins the row; the loser gets no row.
+// This is the guard against double-executing a confirmed (financial) tool.
+func (q *Queries) ClaimPendingConfirmation(ctx context.Context, chatID string) (PendingConfirmation, error) {
+	row := q.db.QueryRow(ctx, claimPendingConfirmation, chatID)
 	var i PendingConfirmation
 	err := row.Scan(
 		&i.ChatID,
@@ -295,46 +295,6 @@ func (q *Queries) CreateToolExecution(ctx context.Context, arg CreateToolExecuti
 	return err
 }
 
-const listToolExecutionsByChat = `-- name: ListToolExecutionsByChat :many
-SELECT id, chat_id, tool_id, args, result, status, ts FROM tool_executions
-WHERE chat_id = $1
-ORDER BY ts DESC
-LIMIT $2
-`
-
-type ListToolExecutionsByChatParams struct {
-	ChatID string `json:"chat_id"`
-	Limit  int32  `json:"limit"`
-}
-
-func (q *Queries) ListToolExecutionsByChat(ctx context.Context, arg ListToolExecutionsByChatParams) ([]ToolExecution, error) {
-	rows, err := q.db.Query(ctx, listToolExecutionsByChat, arg.ChatID, arg.Limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ToolExecution
-	for rows.Next() {
-		var i ToolExecution
-		if err := rows.Scan(
-			&i.ID,
-			&i.ChatID,
-			&i.ToolID,
-			&i.Args,
-			&i.Result,
-			&i.Status,
-			&i.Ts,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const createTtsHistory = `-- name: CreateTtsHistory :exec
 INSERT INTO tts_history (id, ts, text, model, speed, duration_ms, size_bytes)
 VALUES ($1, NOW(), $2, $3, $4, $5, $6)
@@ -469,30 +429,6 @@ func (q *Queries) CreateWaMessage(ctx context.Context, arg CreateWaMessageParams
 	return err
 }
 
-const createWebhookLog = `-- name: CreateWebhookLog :exec
-INSERT INTO webhook_logs (id, type, ts, status, input_preview, duration_ms)
-VALUES ($1, $2, NOW(), $3, $4, $5)
-`
-
-type CreateWebhookLogParams struct {
-	ID           string `json:"id"`
-	Type         string `json:"type"`
-	Status       int32  `json:"status"`
-	InputPreview string `json:"input_preview"`
-	DurationMs   int32  `json:"duration_ms"`
-}
-
-func (q *Queries) CreateWebhookLog(ctx context.Context, arg CreateWebhookLogParams) error {
-	_, err := q.db.Exec(ctx, createWebhookLog,
-		arg.ID,
-		arg.Type,
-		arg.Status,
-		arg.InputPreview,
-		arg.DurationMs,
-	)
-	return err
-}
-
 const deletePendingConfirmation = `-- name: DeletePendingConfirmation :exec
 DELETE FROM pending_confirmations WHERE chat_id = $1
 `
@@ -581,46 +517,6 @@ func (q *Queries) GetPendingConfirmation(ctx context.Context, chatID string) (Pe
 		&i.Intent,
 	)
 	return i, err
-}
-
-const listPendingConfirmations = `-- name: ListPendingConfirmations :many
-SELECT chat_id, tool_id, args, org_id, acting_user_uid, description, status, claimed_at, created_at, expires_at, missing_fields, collect_rounds, intent FROM pending_confirmations
-WHERE status = 'pending'
-ORDER BY created_at DESC
-`
-
-func (q *Queries) ListPendingConfirmations(ctx context.Context) ([]PendingConfirmation, error) {
-	rows, err := q.db.Query(ctx, listPendingConfirmations)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []PendingConfirmation
-	for rows.Next() {
-		var i PendingConfirmation
-		if err := rows.Scan(
-			&i.ChatID,
-			&i.ToolID,
-			&i.Args,
-			&i.OrgID,
-			&i.ActingUserUid,
-			&i.Description,
-			&i.Status,
-			&i.ClaimedAt,
-			&i.CreatedAt,
-			&i.ExpiresAt,
-			&i.MissingFields,
-			&i.CollectRounds,
-			&i.Intent,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const getSettings = `-- name: GetSettings :one
@@ -840,6 +736,46 @@ func (q *Queries) ListConversationTurnsAfter(ctx context.Context, arg ListConver
 	return items, nil
 }
 
+const listPendingConfirmations = `-- name: ListPendingConfirmations :many
+SELECT chat_id, tool_id, args, org_id, acting_user_uid, description, status, claimed_at, created_at, expires_at, missing_fields, collect_rounds, intent FROM pending_confirmations
+WHERE status = 'pending'
+ORDER BY created_at DESC
+`
+
+func (q *Queries) ListPendingConfirmations(ctx context.Context) ([]PendingConfirmation, error) {
+	rows, err := q.db.Query(ctx, listPendingConfirmations)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PendingConfirmation
+	for rows.Next() {
+		var i PendingConfirmation
+		if err := rows.Scan(
+			&i.ChatID,
+			&i.ToolID,
+			&i.Args,
+			&i.OrgID,
+			&i.ActingUserUid,
+			&i.Description,
+			&i.Status,
+			&i.ClaimedAt,
+			&i.CreatedAt,
+			&i.ExpiresAt,
+			&i.MissingFields,
+			&i.CollectRounds,
+			&i.Intent,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPendingWaVoiceNotes = `-- name: ListPendingWaVoiceNotes :many
 SELECT id, chat_id, direction, sender, receiver, object_path, mime_type, size_bytes, duration_seconds, status, attempts, next_attempt_at, last_error, created_at, uploaded_at FROM wa_voice_notes
 WHERE status = 'pending' AND next_attempt_at <= NOW()
@@ -980,6 +916,46 @@ func (q *Queries) ListRecentWaActivity(ctx context.Context, limit int32) ([]WaAc
 	return items, nil
 }
 
+const listToolExecutionsByChat = `-- name: ListToolExecutionsByChat :many
+SELECT id, chat_id, tool_id, args, result, status, ts FROM tool_executions
+WHERE chat_id = $1
+ORDER BY ts DESC
+LIMIT $2
+`
+
+type ListToolExecutionsByChatParams struct {
+	ChatID string `json:"chat_id"`
+	Limit  int32  `json:"limit"`
+}
+
+func (q *Queries) ListToolExecutionsByChat(ctx context.Context, arg ListToolExecutionsByChatParams) ([]ToolExecution, error) {
+	rows, err := q.db.Query(ctx, listToolExecutionsByChat, arg.ChatID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ToolExecution
+	for rows.Next() {
+		var i ToolExecution
+		if err := rows.Scan(
+			&i.ID,
+			&i.ChatID,
+			&i.ToolID,
+			&i.Args,
+			&i.Result,
+			&i.Status,
+			&i.Ts,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listWaChatsSummary = `-- name: ListWaChatsSummary :many
 SELECT chat_id, last_message, last_direction, last_sender, last_message_at, contact_name, contact_enabled, contact_agent_id, contact_erp_display_name, contact_erp_org_id, contact_erp_role, contact_erp_unresolved_reason, contact_erp_phone_override FROM (
     SELECT DISTINCT ON (m.chat_id)
@@ -1083,87 +1059,6 @@ func (q *Queries) ListWaContacts(ctx context.Context) ([]WaContact, error) {
 		return nil, err
 	}
 	return items, nil
-}
-
-const updateWaContactErpLink = `-- name: UpdateWaContactErpLink :one
-INSERT INTO wa_contacts (chat_id, erp_uid, erp_display_name, erp_org_id, erp_role, erp_unresolved_reason, erp_resolved_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
-ON CONFLICT (chat_id) DO UPDATE
-SET erp_uid = EXCLUDED.erp_uid, erp_display_name = EXCLUDED.erp_display_name,
-    erp_org_id = EXCLUDED.erp_org_id, erp_role = EXCLUDED.erp_role,
-    erp_unresolved_reason = EXCLUDED.erp_unresolved_reason, erp_resolved_at = NOW()
-RETURNING chat_id, name, enabled, agent_id, prompt_override, updated_at, erp_uid, erp_display_name, erp_org_id, erp_role, erp_unresolved_reason, erp_resolved_at, erp_phone_override
-`
-
-type UpdateWaContactErpLinkParams struct {
-	ChatID              string  `json:"chat_id"`
-	ErpUid              *string `json:"erp_uid"`
-	ErpDisplayName      *string `json:"erp_display_name"`
-	ErpOrgID            *string `json:"erp_org_id"`
-	ErpRole             *string `json:"erp_role"`
-	ErpUnresolvedReason *string `json:"erp_unresolved_reason"`
-}
-
-func (q *Queries) UpdateWaContactErpLink(ctx context.Context, arg UpdateWaContactErpLinkParams) (WaContact, error) {
-	row := q.db.QueryRow(ctx, updateWaContactErpLink,
-		arg.ChatID,
-		arg.ErpUid,
-		arg.ErpDisplayName,
-		arg.ErpOrgID,
-		arg.ErpRole,
-		arg.ErpUnresolvedReason,
-	)
-	var i WaContact
-	err := row.Scan(
-		&i.ChatID,
-		&i.Name,
-		&i.Enabled,
-		&i.AgentID,
-		&i.PromptOverride,
-		&i.UpdatedAt,
-		&i.ErpUid,
-		&i.ErpDisplayName,
-		&i.ErpOrgID,
-		&i.ErpRole,
-		&i.ErpUnresolvedReason,
-		&i.ErpResolvedAt,
-		&i.ErpPhoneOverride,
-	)
-	return i, err
-}
-
-const updateWaContactErpOverride = `-- name: UpdateWaContactErpOverride :one
-INSERT INTO wa_contacts (chat_id, erp_phone_override, updated_at)
-VALUES ($1, $2, NOW())
-ON CONFLICT (chat_id) DO UPDATE
-SET erp_phone_override = EXCLUDED.erp_phone_override, updated_at = NOW()
-RETURNING chat_id, name, enabled, agent_id, prompt_override, updated_at, erp_uid, erp_display_name, erp_org_id, erp_role, erp_unresolved_reason, erp_resolved_at, erp_phone_override
-`
-
-type UpdateWaContactErpOverrideParams struct {
-	ChatID           string  `json:"chat_id"`
-	ErpPhoneOverride *string `json:"erp_phone_override"`
-}
-
-func (q *Queries) UpdateWaContactErpOverride(ctx context.Context, arg UpdateWaContactErpOverrideParams) (WaContact, error) {
-	row := q.db.QueryRow(ctx, updateWaContactErpOverride, arg.ChatID, arg.ErpPhoneOverride)
-	var i WaContact
-	err := row.Scan(
-		&i.ChatID,
-		&i.Name,
-		&i.Enabled,
-		&i.AgentID,
-		&i.PromptOverride,
-		&i.UpdatedAt,
-		&i.ErpUid,
-		&i.ErpDisplayName,
-		&i.ErpOrgID,
-		&i.ErpRole,
-		&i.ErpUnresolvedReason,
-		&i.ErpResolvedAt,
-		&i.ErpPhoneOverride,
-	)
-	return i, err
 }
 
 const listWaMessagesByChat = `-- name: ListWaMessagesByChat :many
@@ -1303,173 +1198,6 @@ DELETE FROM tool_executions WHERE ts < $1
 func (q *Queries) PurgeToolExecutionsBefore(ctx context.Context, ts time.Time) error {
 	_, err := q.db.Exec(ctx, purgeToolExecutionsBefore, ts)
 	return err
-}
-
-const upsertPromptModule = `-- name: UpsertPromptModule :exec
-INSERT INTO prompt_modules (id, name, type, status, owner_team, updated_at)
-VALUES ($1, $2, $3, $4, $5, NOW())
-ON CONFLICT (id) DO UPDATE
-SET name = EXCLUDED.name, type = EXCLUDED.type, status = EXCLUDED.status,
-    owner_team = EXCLUDED.owner_team, updated_at = NOW()
-`
-
-type UpsertPromptModuleParams struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Type      string `json:"type"`
-	Status    string `json:"status"`
-	OwnerTeam string `json:"owner_team"`
-}
-
-func (q *Queries) UpsertPromptModule(ctx context.Context, arg UpsertPromptModuleParams) error {
-	_, err := q.db.Exec(ctx, upsertPromptModule,
-		arg.ID,
-		arg.Name,
-		arg.Type,
-		arg.Status,
-		arg.OwnerTeam,
-	)
-	return err
-}
-
-const upsertPromptModuleVersion = `-- name: UpsertPromptModuleVersion :exec
-INSERT INTO prompt_module_versions (id, module_id, version, body, hash, changelog)
-VALUES ($1, $2, $3, $4, $5, $6)
-ON CONFLICT (module_id, version) DO UPDATE
-SET body = EXCLUDED.body, hash = EXCLUDED.hash, changelog = EXCLUDED.changelog
-`
-
-type UpsertPromptModuleVersionParams struct {
-	ID        string `json:"id"`
-	ModuleID  string `json:"module_id"`
-	Version   int32  `json:"version"`
-	Body      string `json:"body"`
-	Hash      string `json:"hash"`
-	Changelog string `json:"changelog"`
-}
-
-func (q *Queries) UpsertPromptModuleVersion(ctx context.Context, arg UpsertPromptModuleVersionParams) error {
-	_, err := q.db.Exec(ctx, upsertPromptModuleVersion,
-		arg.ID,
-		arg.ModuleID,
-		arg.Version,
-		arg.Body,
-		arg.Hash,
-		arg.Changelog,
-	)
-	return err
-}
-
-const upsertPromptStack = `-- name: UpsertPromptStack :exec
-INSERT INTO prompt_stacks (id, agent_id, name, status, updated_at)
-VALUES ($1, $2, $3, $4, NOW())
-ON CONFLICT (id) DO UPDATE
-SET agent_id = EXCLUDED.agent_id, name = EXCLUDED.name, status = EXCLUDED.status, updated_at = NOW()
-`
-
-type UpsertPromptStackParams struct {
-	ID      string `json:"id"`
-	AgentID string `json:"agent_id"`
-	Name    string `json:"name"`
-	Status  string `json:"status"`
-}
-
-func (q *Queries) UpsertPromptStack(ctx context.Context, arg UpsertPromptStackParams) error {
-	_, err := q.db.Exec(ctx, upsertPromptStack,
-		arg.ID,
-		arg.AgentID,
-		arg.Name,
-		arg.Status,
-	)
-	return err
-}
-
-const upsertPromptStackModule = `-- name: UpsertPromptStackModule :exec
-INSERT INTO prompt_stack_modules (stack_id, module_version_id, order_index, condition_expr)
-VALUES ($1, $2, $3, $4)
-ON CONFLICT (stack_id, module_version_id) DO UPDATE
-SET order_index = EXCLUDED.order_index, condition_expr = EXCLUDED.condition_expr
-`
-
-type UpsertPromptStackModuleParams struct {
-	StackID         string `json:"stack_id"`
-	ModuleVersionID string `json:"module_version_id"`
-	OrderIndex      int32  `json:"order_index"`
-	ConditionExpr   string `json:"condition_expr"`
-}
-
-func (q *Queries) UpsertPromptStackModule(ctx context.Context, arg UpsertPromptStackModuleParams) error {
-	_, err := q.db.Exec(ctx, upsertPromptStackModule,
-		arg.StackID,
-		arg.ModuleVersionID,
-		arg.OrderIndex,
-		arg.ConditionExpr,
-	)
-	return err
-}
-
-const listPromptStackModulesByAgent = `-- name: ListPromptStackModulesByAgent :many
-SELECT
-    ps.id AS stack_id,
-    ps.name AS stack_name,
-    pm.id AS module_id,
-    pm.name AS module_name,
-    pm.type AS module_type,
-    pmv.id AS module_version_id,
-    pmv.version AS module_version,
-    pmv.body AS body,
-    pmv.hash AS hash,
-    psm.order_index AS order_index
-FROM prompt_stacks ps
-JOIN prompt_stack_modules psm ON psm.stack_id = ps.id
-JOIN prompt_module_versions pmv ON pmv.id = psm.module_version_id
-JOIN prompt_modules pm ON pm.id = pmv.module_id
-WHERE ps.agent_id = $1 AND ps.status = 'active' AND pm.status = 'active'
-ORDER BY psm.order_index ASC, pm.name ASC
-`
-
-type ListPromptStackModulesByAgentRow struct {
-	StackID         string `json:"stack_id"`
-	StackName       string `json:"stack_name"`
-	ModuleID        string `json:"module_id"`
-	ModuleName      string `json:"module_name"`
-	ModuleType      string `json:"module_type"`
-	ModuleVersionID string `json:"module_version_id"`
-	ModuleVersion   int32  `json:"module_version"`
-	Body            string `json:"body"`
-	Hash            string `json:"hash"`
-	OrderIndex      int32  `json:"order_index"`
-}
-
-func (q *Queries) ListPromptStackModulesByAgent(ctx context.Context, agentID string) ([]ListPromptStackModulesByAgentRow, error) {
-	rows, err := q.db.Query(ctx, listPromptStackModulesByAgent, agentID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ListPromptStackModulesByAgentRow{}
-	for rows.Next() {
-		var i ListPromptStackModulesByAgentRow
-		if err := rows.Scan(
-			&i.StackID,
-			&i.StackName,
-			&i.ModuleID,
-			&i.ModuleName,
-			&i.ModuleType,
-			&i.ModuleVersionID,
-			&i.ModuleVersion,
-			&i.Body,
-			&i.Hash,
-			&i.OrderIndex,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const purgeTtsHistoryBefore = `-- name: PurgeTtsHistoryBefore :exec
@@ -1629,6 +1357,92 @@ func (q *Queries) UpdateSettings(ctx context.Context, arg UpdateSettingsParams) 
 	return err
 }
 
+const updateWaContactErpLink = `-- name: UpdateWaContactErpLink :one
+INSERT INTO wa_contacts (chat_id, erp_uid, erp_display_name, erp_org_id, erp_role, erp_unresolved_reason, erp_resolved_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+ON CONFLICT (chat_id) DO UPDATE
+SET erp_uid = EXCLUDED.erp_uid, erp_display_name = EXCLUDED.erp_display_name,
+    erp_org_id = EXCLUDED.erp_org_id, erp_role = EXCLUDED.erp_role,
+    erp_unresolved_reason = EXCLUDED.erp_unresolved_reason, erp_resolved_at = NOW()
+RETURNING chat_id, name, enabled, agent_id, prompt_override, updated_at, erp_uid, erp_display_name, erp_org_id, erp_role, erp_unresolved_reason, erp_resolved_at, erp_phone_override
+`
+
+type UpdateWaContactErpLinkParams struct {
+	ChatID              string  `json:"chat_id"`
+	ErpUid              *string `json:"erp_uid"`
+	ErpDisplayName      *string `json:"erp_display_name"`
+	ErpOrgID            *string `json:"erp_org_id"`
+	ErpRole             *string `json:"erp_role"`
+	ErpUnresolvedReason *string `json:"erp_unresolved_reason"`
+}
+
+// Persists the outcome of resolving this contact's phone against the ERP
+// (see internal/erp.Client.ResolveIdentity). erp_unresolved_reason is set
+// when resolution didn't produce an identity, and cleared otherwise.
+func (q *Queries) UpdateWaContactErpLink(ctx context.Context, arg UpdateWaContactErpLinkParams) (WaContact, error) {
+	row := q.db.QueryRow(ctx, updateWaContactErpLink,
+		arg.ChatID,
+		arg.ErpUid,
+		arg.ErpDisplayName,
+		arg.ErpOrgID,
+		arg.ErpRole,
+		arg.ErpUnresolvedReason,
+	)
+	var i WaContact
+	err := row.Scan(
+		&i.ChatID,
+		&i.Name,
+		&i.Enabled,
+		&i.AgentID,
+		&i.PromptOverride,
+		&i.UpdatedAt,
+		&i.ErpUid,
+		&i.ErpDisplayName,
+		&i.ErpOrgID,
+		&i.ErpRole,
+		&i.ErpUnresolvedReason,
+		&i.ErpResolvedAt,
+		&i.ErpPhoneOverride,
+	)
+	return i, err
+}
+
+const updateWaContactErpOverride = `-- name: UpdateWaContactErpOverride :one
+INSERT INTO wa_contacts (chat_id, erp_phone_override, updated_at)
+VALUES ($1, $2, NOW())
+ON CONFLICT (chat_id) DO UPDATE
+SET erp_phone_override = EXCLUDED.erp_phone_override, updated_at = NOW()
+RETURNING chat_id, name, enabled, agent_id, prompt_override, updated_at, erp_uid, erp_display_name, erp_org_id, erp_role, erp_unresolved_reason, erp_resolved_at, erp_phone_override
+`
+
+type UpdateWaContactErpOverrideParams struct {
+	ChatID           string  `json:"chat_id"`
+	ErpPhoneOverride *string `json:"erp_phone_override"`
+}
+
+// Sets (or clears, with an empty string) the phone number an operator wants
+// used for ERP identity resolution instead of the one derived from chat_id.
+func (q *Queries) UpdateWaContactErpOverride(ctx context.Context, arg UpdateWaContactErpOverrideParams) (WaContact, error) {
+	row := q.db.QueryRow(ctx, updateWaContactErpOverride, arg.ChatID, arg.ErpPhoneOverride)
+	var i WaContact
+	err := row.Scan(
+		&i.ChatID,
+		&i.Name,
+		&i.Enabled,
+		&i.AgentID,
+		&i.PromptOverride,
+		&i.UpdatedAt,
+		&i.ErpUid,
+		&i.ErpDisplayName,
+		&i.ErpOrgID,
+		&i.ErpRole,
+		&i.ErpUnresolvedReason,
+		&i.ErpResolvedAt,
+		&i.ErpPhoneOverride,
+	)
+	return i, err
+}
+
 const updateWaContactSettings = `-- name: UpdateWaContactSettings :one
 UPDATE wa_contacts
 SET enabled = $2, agent_id = $3, updated_at = NOW()
@@ -1661,58 +1475,6 @@ func (q *Queries) UpdateWaContactSettings(ctx context.Context, arg UpdateWaConta
 		&i.ErpPhoneOverride,
 	)
 	return i, err
-}
-
-const upsertConversationState = `-- name: UpsertConversationState :exec
-INSERT INTO conversation_state (chat_id, summary, summarized_through, updated_at)
-VALUES ($1, $2, $3, NOW())
-ON CONFLICT (chat_id) DO UPDATE
-SET summary = EXCLUDED.summary, summarized_through = EXCLUDED.summarized_through, updated_at = NOW()
-`
-
-type UpsertConversationStateParams struct {
-	ChatID            string `json:"chat_id"`
-	Summary           string `json:"summary"`
-	SummarizedThrough int64  `json:"summarized_through"`
-}
-
-func (q *Queries) UpsertConversationState(ctx context.Context, arg UpsertConversationStateParams) error {
-	_, err := q.db.Exec(ctx, upsertConversationState, arg.ChatID, arg.Summary, arg.SummarizedThrough)
-	return err
-}
-
-const upsertPendingConfirmation = `-- name: UpsertPendingConfirmation :exec
-INSERT INTO pending_confirmations (chat_id, tool_id, args, org_id, acting_user_uid, description, status, claimed_at, created_at, expires_at, missing_fields, collect_rounds, intent)
-VALUES ($1, $2, $3, $4, $5, $6, 'pending', NULL, NOW(), $7, '[]'::jsonb, 0, '')
-ON CONFLICT (chat_id) DO UPDATE
-SET tool_id = EXCLUDED.tool_id, args = EXCLUDED.args, org_id = EXCLUDED.org_id,
-    acting_user_uid = EXCLUDED.acting_user_uid, description = EXCLUDED.description,
-    status = 'pending', claimed_at = NULL,
-    created_at = NOW(), expires_at = EXCLUDED.expires_at,
-    missing_fields = '[]'::jsonb, collect_rounds = 0, intent = ''
-`
-
-type UpsertPendingConfirmationParams struct {
-	ChatID        string    `json:"chat_id"`
-	ToolID        string    `json:"tool_id"`
-	Args          []byte    `json:"args"`
-	OrgID         string    `json:"org_id"`
-	ActingUserUid string    `json:"acting_user_uid"`
-	Description   string    `json:"description"`
-	ExpiresAt     time.Time `json:"expires_at"`
-}
-
-func (q *Queries) UpsertPendingConfirmation(ctx context.Context, arg UpsertPendingConfirmationParams) error {
-	_, err := q.db.Exec(ctx, upsertPendingConfirmation,
-		arg.ChatID,
-		arg.ToolID,
-		arg.Args,
-		arg.OrgID,
-		arg.ActingUserUid,
-		arg.Description,
-		arg.ExpiresAt,
-	)
-	return err
 }
 
 const upsertCollecting = `-- name: UpsertCollecting :exec
@@ -1755,6 +1517,61 @@ func (q *Queries) UpsertCollecting(ctx context.Context, arg UpsertCollectingPara
 		arg.MissingFields,
 		arg.CollectRounds,
 		arg.Intent,
+	)
+	return err
+}
+
+const upsertConversationState = `-- name: UpsertConversationState :exec
+INSERT INTO conversation_state (chat_id, summary, summarized_through, updated_at)
+VALUES ($1, $2, $3, NOW())
+ON CONFLICT (chat_id) DO UPDATE
+SET summary = EXCLUDED.summary, summarized_through = EXCLUDED.summarized_through, updated_at = NOW()
+`
+
+type UpsertConversationStateParams struct {
+	ChatID            string `json:"chat_id"`
+	Summary           string `json:"summary"`
+	SummarizedThrough int64  `json:"summarized_through"`
+}
+
+func (q *Queries) UpsertConversationState(ctx context.Context, arg UpsertConversationStateParams) error {
+	_, err := q.db.Exec(ctx, upsertConversationState, arg.ChatID, arg.Summary, arg.SummarizedThrough)
+	return err
+}
+
+const upsertPendingConfirmation = `-- name: UpsertPendingConfirmation :exec
+INSERT INTO pending_confirmations (chat_id, tool_id, args, org_id, acting_user_uid, description, status, claimed_at, created_at, expires_at, missing_fields, collect_rounds, intent)
+VALUES ($1, $2, $3, $4, $5, $6, 'pending', NULL, NOW(), $7, '[]'::jsonb, 0, '')
+ON CONFLICT (chat_id) DO UPDATE
+SET tool_id = EXCLUDED.tool_id, args = EXCLUDED.args, org_id = EXCLUDED.org_id,
+    acting_user_uid = EXCLUDED.acting_user_uid, description = EXCLUDED.description,
+    status = 'pending', claimed_at = NULL,
+    created_at = NOW(), expires_at = EXCLUDED.expires_at,
+    missing_fields = '[]'::jsonb, collect_rounds = 0, intent = ''
+`
+
+type UpsertPendingConfirmationParams struct {
+	ChatID        string    `json:"chat_id"`
+	ToolID        string    `json:"tool_id"`
+	Args          []byte    `json:"args"`
+	OrgID         string    `json:"org_id"`
+	ActingUserUid string    `json:"acting_user_uid"`
+	Description   string    `json:"description"`
+	ExpiresAt     time.Time `json:"expires_at"`
+}
+
+// Also resets missing_fields/collect_rounds/intent to their defaults on
+// conflict, so a completed 'collecting' row that graduates into an ordinary
+// confirmation (F-1 fix) doesn't carry stale slot-filling state forward.
+func (q *Queries) UpsertPendingConfirmation(ctx context.Context, arg UpsertPendingConfirmationParams) error {
+	_, err := q.db.Exec(ctx, upsertPendingConfirmation,
+		arg.ChatID,
+		arg.ToolID,
+		arg.Args,
+		arg.OrgID,
+		arg.ActingUserUid,
+		arg.Description,
+		arg.ExpiresAt,
 	)
 	return err
 }

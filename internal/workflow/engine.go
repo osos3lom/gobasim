@@ -1,17 +1,13 @@
 package workflow
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
-	"os"
 	"sawt-go/config"
 	"sawt-go/database"
-	"sawt-go/internal/agentcfg"
 	"sawt-go/internal/erp"
 	"sawt-go/internal/trace"
 	"strings"
@@ -170,157 +166,7 @@ func NewWorkflowEngine(cfg *config.Config, erpClient *erp.Client, queries databa
 	return e
 }
 
-// providersCtxKey carries the per-request LLM provider chain (an agent's own
-// configured provider ahead of the global env cascade) so chatCompletions can
-// prefer it without changing the completionFn seam that tests inject.
-type providersCtxKey struct{}
 
-func providersFromCtx(ctx context.Context) []llmProvider {
-	p, _ := ctx.Value(providersCtxKey{}).([]llmProvider)
-	return p
-}
-
-// resolveAgent returns the agent bound to a chat using the same precedence as
-// resolveSystemPrompt (contact's assigned agent, else the "default" agent). It
-// is nil-safe: an unconfigured querier (unit tests) yields no agent.
-func (e *WorkflowEngine) resolveAgent(ctx context.Context, chatID string) (database.Agent, bool) {
-	if e.queries == nil || chatID == "" {
-		return database.Agent{}, false
-	}
-	if contact, err := e.queries.GetWaContact(ctx, chatID); err == nil &&
-		contact.AgentID != nil && *contact.AgentID != "" {
-		if agent, err := e.queries.GetAgent(ctx, *contact.AgentID); err == nil {
-			return agent, true
-		}
-	}
-	if agent, err := e.queries.GetAgent(ctx, "default"); err == nil {
-		return agent, true
-	}
-	return database.Agent{}, false
-}
-
-// ResolveTTS returns the TTS voice config for a chat's agent, falling back to
-// agentcfg defaults when no agent (or a malformed config) is found. The outbound
-// voice-note pipeline uses this to drive per-agent speech synthesis.
-func (e *WorkflowEngine) ResolveTTS(ctx context.Context, chatID string) agentcfg.TTS {
-	agent, ok := e.resolveAgent(ctx, chatID)
-	if !ok {
-		return agentcfg.DefaultTTS()
-	}
-	tts, err := agentcfg.ParseTTS(agent.Tts)
-	if err != nil {
-		return agentcfg.DefaultTTS()
-	}
-	return tts
-}
-
-// withAgentProviders resolves the chat's agent LLM config and, when it is
-// complete (env key present, model + URL set), returns a context whose provider
-// chain puts that agent-specific provider first and keeps the global env cascade
-// as fallback. An incomplete/absent config leaves the context untouched so the
-// engine keeps using the env cascade exactly as before.
-func (e *WorkflowEngine) withAgentProviders(ctx context.Context, chatID string) context.Context {
-	agent, ok := e.resolveAgent(ctx, chatID)
-	if !ok {
-		return ctx
-	}
-	cfg, err := agentcfg.ParseLLM(agent.Llm)
-	if err != nil {
-		return ctx
-	}
-	key := os.Getenv(cfg.APIKeyEnv)
-	if key == "" || cfg.Model == "" || cfg.URL == "" {
-		return ctx
-	}
-	primary := llmProvider{
-		Name:    "agent:" + cfg.Vendor,
-		BaseURL: strings.TrimRight(cfg.URL, "/"),
-		APIKey:  key,
-		Model:   cfg.Model,
-	}
-	return context.WithValue(ctx, providersCtxKey{}, append([]llmProvider{primary}, e.providers...))
-}
-
-// chatCompletions cascades through the request's LLM provider chain (an agent's
-// own provider first when configured, otherwise the global env cascade),
-// returning the first successful completion.
-func (e *WorkflowEngine) chatCompletions(ctx context.Context, messages []Message, tools []ToolDefinition, temp float32, maxTokens int) (*Message, error) {
-	providers := providersFromCtx(ctx)
-	if len(providers) == 0 {
-		providers = e.providers
-	}
-	if len(providers) == 0 {
-		return nil, fmt.Errorf("no LLM providers configured (set NIM_API_KEY and/or OPENAI_API_KEY)")
-	}
-
-	var lastErr error
-	for _, p := range providers {
-		msg, err := e.callProvider(ctx, p, messages, tools, temp, maxTokens)
-		if err == nil {
-			return msg, nil
-		}
-		trace.Logf(ctx, "[workflow] LLM provider '%s' failed, trying next: %v", p.Name, err)
-		lastErr = err
-	}
-	return nil, fmt.Errorf("all LLM providers failed: %w", lastErr)
-}
-
-// callProvider makes a standard HTTP request to one OpenAI-compatible endpoint.
-func (e *WorkflowEngine) callProvider(ctx context.Context, p llmProvider, messages []Message, tools []ToolDefinition, temp float32, maxTokens int) (*Message, error) {
-	url := fmt.Sprintf("%s/chat/completions", p.BaseURL)
-
-	payload := ChatCompletionRequest{
-		Model:       p.Model,
-		Messages:    messages,
-		Temperature: temp,
-		MaxTokens:   maxTokens,
-		Tools:       tools,
-	}
-
-	jsonBytes, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(jsonBytes))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+p.APIKey)
-
-	resp, err := e.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("http request failed: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	respBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("LLM API returned status %d: %s", resp.StatusCode, string(respBytes))
-	}
-
-	var responseStruct struct {
-		Choices []struct {
-			Message Message `json:"message"`
-		} `json:"choices"`
-	}
-
-	if err := json.Unmarshal(respBytes, &responseStruct); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal LLM response: %w, payload: %s", err, string(respBytes))
-	}
-
-	if len(responseStruct.Choices) == 0 {
-		return nil, fmt.Errorf("LLM returned empty choices list")
-	}
-
-	return &responseStruct.Choices[0].Message, nil
-}
 
 // ClassifyIntent routes the conversation by identifying user intentions.
 func (e *WorkflowEngine) ClassifyIntent(ctx context.Context, state *State) error {

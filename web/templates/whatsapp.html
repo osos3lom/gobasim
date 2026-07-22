@@ -65,83 +65,61 @@
         </div>
     </div>
 
-    <!-- Tab state (radio inputs, mutually exclusive, no JS) -->
-    <input type="radio" name="wa-tab" id="wa-tab-connection" class="hidden peer/tab-connection" checked>
-    <input type="radio" name="wa-tab" id="wa-tab-contacts" class="hidden peer/tab-contacts">
-    <input type="radio" name="wa-tab" id="wa-tab-messages" class="hidden peer/tab-messages">
+    <script>
+    window.switchWaTab = function(tabName) {
+        var tabs = ["connection", "contacts", "messages"];
+        tabs.forEach(function(t) {
+            var panel = document.getElementById("wa-panel-" + t);
+            var btn = document.getElementById("wa-btn-" + t);
+            if (panel) {
+                if (t === tabName) {
+                    panel.style.setProperty("display", "block", "important");
+                } else {
+                    panel.style.setProperty("display", "none", "important");
+                }
+            }
+            if (btn) {
+                if (t === tabName) {
+                    btn.className = "wa-tab-btn px-4 py-2.5 text-sm font-semibold rounded-t-xl transition duration-200 border-b-2 text-white bg-indigo-950/60 border-indigo-500";
+                } else {
+                    btn.className = "wa-tab-btn px-4 py-2.5 text-sm font-semibold rounded-t-xl transition duration-200 border-b-2 border-transparent text-gray-400 hover:text-gray-200";
+                }
+            }
+        });
+    };
+    </script>
 
-    <!-- Tab nav. -->
-    <label for="wa-tab-connection" class="inline-block mr-1 px-4 py-2.5 cursor-pointer text-sm font-semibold rounded-t-xl transition duration-200 border-b-2 border-transparent text-gray-400 hover:text-gray-200 peer-checked/tab-connection:text-white peer-checked/tab-connection:bg-indigo-950/60 peer-checked/tab-connection:border-indigo-500">
-        Connection &amp; Pairing
-    </label>
-    <label for="wa-tab-contacts" class="inline-block mr-1 px-4 py-2.5 cursor-pointer text-sm font-semibold rounded-t-xl transition duration-200 border-b-2 border-transparent text-gray-400 hover:text-gray-200 peer-checked/tab-contacts:text-white peer-checked/tab-contacts:bg-indigo-950/60 peer-checked/tab-contacts:border-indigo-500">
-        Contacts &amp; ERP Pilot
-    </label>
-    <label for="wa-tab-messages" class="inline-block px-4 py-2.5 cursor-pointer text-sm font-semibold rounded-t-xl transition duration-200 border-b-2 border-transparent text-gray-400 hover:text-gray-200 peer-checked/tab-messages:text-white peer-checked/tab-messages:bg-indigo-950/60 peer-checked/tab-messages:border-indigo-500">
-        Messages &amp; Pilot Terminal
-    </label>
+    <!-- Tab nav -->
+    <div class="flex items-center gap-1">
+        <button type="button" id="wa-btn-connection" onclick="window.switchWaTab('connection')"
+            class="wa-tab-btn px-4 py-2.5 text-sm font-semibold rounded-t-xl transition duration-200 border-b-2 text-white bg-indigo-950/60 border-indigo-500">
+            Connection &amp; Pairing
+        </button>
+        <button type="button" id="wa-btn-contacts" onclick="window.switchWaTab('contacts')"
+            class="wa-tab-btn px-4 py-2.5 text-sm font-semibold rounded-t-xl transition duration-200 border-b-2 border-transparent text-gray-400 hover:text-gray-200">
+            Contacts &amp; ERP Pilot
+        </button>
+        <button type="button" id="wa-btn-messages" onclick="window.switchWaTab('messages')"
+            class="wa-tab-btn px-4 py-2.5 text-sm font-semibold rounded-t-xl transition duration-200 border-b-2 border-transparent text-gray-400 hover:text-gray-200">
+            Messages &amp; Pilot Terminal
+        </button>
+    </div>
     <div class="border-b border-indigo-950/50"></div>
 
     <!-- Connection tab panel -->
-    <div id="wa-panel-connection" class="hidden peer-checked/tab-connection:block max-w-2xl">
+    <div id="wa-panel-connection" class="max-w-2xl" style="display: block;">
         {{template "whatsapp_card" .}}
     </div>
 
     <!-- Contacts tab panel -->
-    <div id="wa-panel-contacts" class="hidden peer-checked/tab-contacts:block max-w-2xl">
+    <div id="wa-panel-contacts" class="max-w-2xl" style="display: none;">
         {{template "wa-contacts-panel" .}}
     </div>
 
     <!-- Messages tab panel -->
-    <div id="wa-panel-messages" class="hidden peer-checked/tab-messages:block">
+    <div id="wa-panel-messages" style="display: none;">
         {{template "wa-messages-panel" .}}
     </div>
-
-    <!-- JS Tab Switching Fallback/Enhancement -->
-    <script>
-    (function() {
-        const tabs = ["connection", "contacts", "messages"];
-        
-        function updateTabs() {
-            tabs.forEach(tab => {
-                const radio = document.getElementById(`wa-tab-${tab}`);
-                const panel = document.getElementById(`wa-panel-${tab}`);
-                if (radio && panel) {
-                    if (radio.checked) {
-                        panel.style.setProperty("display", "block", "important");
-                    } else {
-                        panel.style.setProperty("display", "none", "important");
-                    }
-                }
-            });
-        }
-
-        // Run on load and bind event listeners
-        document.addEventListener("DOMContentLoaded", () => {
-            tabs.forEach(tab => {
-                const radio = document.getElementById(`wa-tab-${tab}`);
-                if (radio) {
-                    radio.addEventListener("change", updateTabs);
-                }
-            });
-            updateTabs();
-        });
-
-        // Also run immediately since HTMX swaps might bypass DOMContentLoaded
-        setTimeout(updateTabs, 50);
-        // Bind to htmx events to re-apply/update if page is swapped
-        document.body.addEventListener('htmx:afterOnLoad', () => {
-            tabs.forEach(tab => {
-                const radio = document.getElementById(`wa-tab-${tab}`);
-                if (radio) {
-                    radio.removeEventListener("change", updateTabs);
-                    radio.addEventListener("change", updateTabs);
-                }
-            });
-            updateTabs();
-        });
-    })();
-    </script>
 
     <!-- System Default Blueprint Modal -->
     <div id="wa-blueprint-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
@@ -332,7 +310,7 @@
 <div class="wa-contact-row py-3 px-4 border-b border-indigo-950/30 last:border-0" id="wa-contact-{{.ChatID}}">
     <div class="flex items-center justify-between">
         <div>
-            <div class="font-semibold text-white text-sm">{{.Name}}</div>
+            <div class="font-semibold text-white text-sm">{{cleanContactName .Name .ChatID .ErpPhoneOverride}}</div>
             {{$phone := waDisplayPhone .ChatID .ErpPhoneOverride}}
             {{if $phone}}
             <div class="text-xs text-gray-400 mt-0.5">{{$phone}}</div>
@@ -358,7 +336,7 @@
                 class="text-[10px] text-emerald-400 hover:text-emerald-300 font-semibold px-2 py-0.5 transition duration-200">
                 ERP Profile ↗
             </a>
-            <button type="button" onclick="this.closest('.wa-contact-row').querySelector('.wa-edit-form').classList.toggle('hidden')"
+            <button type="button" onclick="window.toggleWaEditDeck('{{.ChatID}}')"
                 class="text-[10px] text-indigo-400 hover:text-indigo-300 font-semibold px-2 py-0.5 transition duration-200">
                 Edit
             </button>
@@ -379,60 +357,83 @@
         </div>
     </div>
 
-    <!-- Inline agent-assignment editor, toggled by the "Edit" button above -->
-    <form hx-post="/dashboard/whatsapp/contacts/{{.ChatID}}/agent" hx-target="closest .wa-contact-row" hx-swap="outerHTML"
-          class="wa-edit-form hidden mt-3 pt-3 border-t border-indigo-950/30 space-y-3">
-        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-        <div>
-            <label for="wa-agent-{{.ChatID}}" class="block text-xs font-semibold text-gray-300 mb-1">Assigned agent</label>
-            {{if .PublishedAgents}}
-            <select id="wa-agent-{{.ChatID}}" name="agent_id"
-                class="w-full bg-slate-950/60 border border-indigo-950 focus:border-indigo-500 rounded-lg px-3 py-2 text-xs text-white outline-none transition duration-200">
-                <option value="">&mdash; Default &mdash;</option>
-                {{range .PublishedAgents}}
-                <option value="{{.ID}}">{{.Name}}</option>
+    <!-- Inline agent-assignment & ERP override deck, toggled by the "Edit" button above -->
+    <div id="wa-edit-deck-{{.ChatID}}" class="hidden mt-3 pt-3 border-t border-indigo-950/30 space-y-4">
+        <form hx-post="/dashboard/whatsapp/contacts/{{.ChatID}}/agent" hx-target="closest .wa-contact-row" hx-swap="outerHTML"
+              class="space-y-3">
+            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+            <div>
+                <label for="wa-agent-{{.ChatID}}" class="block text-xs font-semibold text-gray-300 mb-1">Assigned agent</label>
+                {{if .PublishedAgents}}
+                <select id="wa-agent-{{.ChatID}}" name="agent_id"
+                    class="w-full bg-slate-950/60 border border-indigo-950 focus:border-indigo-500 rounded-lg px-3 py-2 text-xs text-white outline-none transition duration-200">
+                    <option value="">&mdash; Default &mdash;</option>
+                    {{range .PublishedAgents}}
+                    <option value="{{.ID}}">{{.Name}}</option>
+                    {{end}}
+                </select>
+                {{else}}
+                <p class="text-xs text-gray-500 mb-1">No published custom agents &mdash; generalist agent active.</p>
                 {{end}}
-            </select>
-            {{else}}
-            <p class="text-xs text-gray-500 mb-1">No published custom agents &mdash; generalist agent active.</p>
-            {{end}}
-        </div>
-        <div>
-            <label for="wa-prompt-{{.ChatID}}" class="block text-xs font-semibold text-gray-300 mb-1">Prompt override (optional, supplements the assigned agent's prompt)</label>
-            <textarea id="wa-prompt-{{.ChatID}}" name="prompt_override" rows="2"
-                class="w-full bg-slate-950/60 border border-indigo-950 focus:border-indigo-500 rounded-lg px-3 py-2 text-xs text-slate-300 outline-none transition duration-200 resize-y">{{if .PromptOverride}}{{.PromptOverride}}{{end}}</textarea>
-        </div>
-        <div class="flex justify-end">
-            <button type="submit"
-                class="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg transition duration-200">
-                Save Settings
-            </button>
-        </div>
+            </div>
+            <div>
+                <label for="wa-prompt-{{.ChatID}}" class="block text-xs font-semibold text-gray-300 mb-1">Prompt override (optional, supplements the assigned agent's prompt)</label>
+                <textarea id="wa-prompt-{{.ChatID}}" name="prompt_override" rows="2"
+                    class="w-full bg-slate-950/60 border border-indigo-950 focus:border-indigo-500 rounded-lg px-3 py-2 text-xs text-slate-300 outline-none transition duration-200 resize-y">{{if .PromptOverride}}{{.PromptOverride}}{{end}}</textarea>
+            </div>
+            <div class="flex justify-end">
+                <button type="submit"
+                    class="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg transition duration-200">
+                    Save Settings
+                </button>
+            </div>
+        </form>
 
         <!-- ERP identity: override + on-demand resolve + invite -->
         <div class="pt-3 border-t border-indigo-950/30">
             <label for="wa-erp-override-{{.ChatID}}" class="block text-xs font-semibold text-gray-300 mb-1">ERP phone override</label>
             <p class="text-[10px] text-gray-500 mb-1.5">Set this if the contact's WhatsApp number differs from their ERP-registered phone.</p>
-            <div class="flex gap-2">
-                <input type="tel" id="wa-erp-override-{{.ChatID}}" name="erp_phone_override" placeholder="e.g. 971501234567"
-                    value="{{if .ErpPhoneOverride}}{{.ErpPhoneOverride}}{{end}}"
-                    class="flex-1 bg-slate-950/60 border border-indigo-950 focus:border-indigo-500 rounded-lg px-3 py-2 text-xs text-white outline-none transition duration-200">
-                <button type="button" hx-post="/dashboard/whatsapp/contacts/{{.ChatID}}/erp-override" hx-include="closest form" hx-target="closest .wa-contact-row" hx-swap="outerHTML" hx-disabled-elt="this"
-                    class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-gray-200 text-[10px] font-semibold rounded-lg border border-indigo-950 shrink-0 transition duration-200">
-                    Save Phone
-                </button>
-                <button type="button" hx-post="/dashboard/whatsapp/contacts/{{.ChatID}}/resolve-identity" hx-include="closest form" hx-target="closest .wa-contact-row" hx-swap="outerHTML" hx-disabled-elt="this"
-                    class="px-3 py-1.5 bg-indigo-950 hover:bg-indigo-900 text-indigo-200 text-[10px] font-semibold rounded-lg border border-indigo-900 shrink-0 transition duration-200">
-                    Resolve Now
-                </button>
-                <button type="button" hx-post="/dashboard/whatsapp/contacts/{{.ChatID}}/send-link-invite" hx-include="closest form" hx-target="closest .wa-contact-row" hx-swap="outerHTML" hx-disabled-elt="this"
-                    class="px-3 py-1.5 bg-emerald-950 hover:bg-emerald-900 text-emerald-200 text-[10px] font-semibold rounded-lg border border-emerald-900 shrink-0 transition duration-200" title="Send WhatsApp Chat Confirmation Invite">
-                    Send Link Invite 💬
-                </button>
+            <div class="flex flex-wrap items-center gap-2">
+                <form hx-post="/dashboard/whatsapp/contacts/{{.ChatID}}/erp-override" hx-target="closest .wa-contact-row" hx-swap="outerHTML" class="flex-1 flex gap-2">
+                    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+                    <input type="tel" id="wa-erp-override-{{.ChatID}}" name="erp_phone_override" placeholder="e.g. 0546906905"
+                        value="{{if .ErpPhoneOverride}}{{.ErpPhoneOverride}}{{end}}"
+                        class="flex-1 bg-slate-950/60 border border-indigo-950 focus:border-indigo-500 rounded-lg px-3 py-2 text-xs text-white outline-none transition duration-200">
+                    <button type="submit" hx-disabled-elt="this"
+                        class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-gray-200 text-[10px] font-semibold rounded-lg border border-indigo-950 shrink-0 transition duration-200">
+                        Save Phone
+                    </button>
+                </form>
+
+                <form hx-post="/dashboard/whatsapp/contacts/{{.ChatID}}/resolve-identity" hx-target="closest .wa-contact-row" hx-swap="outerHTML" class="inline">
+                    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+                    <button type="submit" hx-disabled-elt="this"
+                        class="px-3 py-1.5 bg-indigo-950 hover:bg-indigo-900 text-indigo-200 text-[10px] font-semibold rounded-lg border border-indigo-900 shrink-0 transition duration-200">
+                        Resolve Now
+                    </button>
+                </form>
+
+                <form hx-post="/dashboard/whatsapp/contacts/{{.ChatID}}/send-link-invite" hx-target="closest .wa-contact-row" hx-swap="outerHTML" class="inline">
+                    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+                    <button type="submit" hx-disabled-elt="this"
+                        class="px-3 py-1.5 bg-emerald-950 hover:bg-emerald-900 text-emerald-200 text-[10px] font-semibold rounded-lg border border-emerald-900 shrink-0 transition duration-200" title="Send WhatsApp Chat Confirmation Invite">
+                        Send Link Invite 💬
+                    </button>
+                </form>
             </div>
         </div>
-    </form>
+    </div>
 </div>
+<script>
+window.toggleWaEditDeck = function(chatID) {
+    var deck = document.getElementById("wa-edit-deck-" + chatID);
+    if (deck) {
+        deck.classList.toggle("hidden");
+    }
+};
+</script>
+
+
 {{end}}
 
 {{define "wa-messages-panel"}}
@@ -461,7 +462,7 @@
     class="w-full text-left px-4 py-3 border-b border-indigo-950/30 hover:bg-slate-900/40 transition duration-200">
     <div class="flex items-center justify-between gap-2">
         <div class="flex items-center gap-1.5 min-w-0">
-            <span class="font-semibold text-white text-sm truncate">{{if .ContactName}}{{.ContactName}}{{else}}{{$p := waDisplayPhone .ChatID .ContactErpPhoneOverride}}{{if $p}}{{$p}}{{else}}Unlinked contact{{end}}{{end}}</span>
+            <span class="font-semibold text-white text-sm truncate">{{if .ContactErpDisplayName}}{{.ContactErpDisplayName}}{{else}}{{cleanContactName .ContactName .ChatID .ContactErpPhoneOverride}}{{end}}</span>
             {{if .ContactEnabled}}
             <span class="flex h-2 w-2 shrink-0 relative" title="AI Agent Active">
                 <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
@@ -635,7 +636,7 @@
     <div class="px-4 py-3 border-b border-indigo-950/50 shrink-0 flex items-center justify-between">
         <div>
             {{$phone := waDisplayPhone .ChatID .ContactErpPhoneOverride}}
-            <h4 class="font-bold text-white text-sm">{{if $phone}}{{$phone}}{{else}}Unlinked contact{{end}}</h4>
+            <h4 class="font-bold text-white text-sm">{{if .WaContact.ErpDisplayName}}{{.WaContact.ErpDisplayName}}{{else if $phone}}{{$phone}}{{else}}WhatsApp Contact{{end}}</h4>
             <p class="text-[10px] text-gray-500">Showing messages logged since Sawt started running &mdash; not full WhatsApp history.</p>
         </div>
         {{if .WindowOpen}}

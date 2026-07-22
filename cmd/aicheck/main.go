@@ -13,7 +13,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"flag"
@@ -44,7 +43,7 @@ func main() {
 	bucket := flag.String("bucket", "", "override VOICE_STORAGE_BUCKET for the GCS check")
 	flag.Parse()
 
-	loadDotEnv(*envFile)
+	_ = config.LoadDotEnv(*envFile)
 	cfg := config.LoadConfig()
 
 	wanted := parseOnly(*only)
@@ -407,31 +406,4 @@ func truncate(s string) string {
 		return s
 	}
 	return s[:max] + "…"
-}
-
-func loadDotEnv(path string) {
-	f, err := os.Open(path)
-	if err != nil {
-		return
-	}
-	defer func() { _ = f.Close() }()
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		eq := strings.Index(line, "=")
-		if eq < 0 {
-			continue
-		}
-		key := strings.TrimSpace(line[:eq])
-		val := strings.TrimSpace(line[eq+1:])
-		if i := strings.Index(val, " #"); i >= 0 {
-			val = strings.TrimSpace(val[:i])
-		}
-		if key != "" {
-			_ = os.Setenv(key, val)
-		}
-	}
 }

@@ -53,12 +53,6 @@ type ConversationTurn struct {
 	Ts      time.Time `json:"ts"`
 }
 
-type HealthCheck struct {
-	ID        int32     `json:"id"`
-	Note      string    `json:"note"`
-	CheckedAt time.Time `json:"checked_at"`
-}
-
 type PendingConfirmation struct {
 	ChatID        string     `json:"chat_id"`
 	ToolID        string     `json:"tool_id"`
@@ -191,13 +185,4 @@ type WaVoiceNote struct {
 	LastError       *string    `json:"last_error"`
 	CreatedAt       time.Time  `json:"created_at"`
 	UploadedAt      *time.Time `json:"uploaded_at"`
-}
-
-type WebhookLog struct {
-	ID           string    `json:"id"`
-	Type         string    `json:"type"`
-	Ts           time.Time `json:"ts"`
-	Status       int32     `json:"status"`
-	InputPreview string    `json:"input_preview"`
-	DurationMs   int32     `json:"duration_ms"`
 }

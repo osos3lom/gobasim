@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bufio"
 	"crypto/rand"
 	"encoding/hex"
 	"log"
@@ -179,4 +180,34 @@ func (c *Config) CanonicalErpURL() string {
 		return "http://mshalia.vercel.app"
 	}
 	return strings.TrimRight(c.MshaliaAPIURL, "/")
+}
+
+// LoadDotEnv parses a simple key=value .env file and sets non-empty keys into environment variables.
+func LoadDotEnv(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		eq := strings.Index(line, "=")
+		if eq < 0 {
+			continue
+		}
+		key := strings.TrimSpace(line[:eq])
+		val := strings.TrimSpace(line[eq+1:])
+		if i := strings.Index(val, " #"); i >= 0 {
+			val = strings.TrimSpace(val[:i])
+		}
+		if key != "" {
+			_ = os.Setenv(key, val)
+		}
+	}
+	return sc.Err()
 }
