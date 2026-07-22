@@ -322,6 +322,10 @@
         </div>
         <div class="flex items-center gap-2">
             <span class="text-xs text-gray-400">{{if .AgentID}}{{.AgentID}}{{else}}default{{end}}</span>
+            <a href="http://localhost:3000/admin/holding/agent-gateway" target="_blank"
+                class="text-[10px] text-emerald-400 hover:text-emerald-300 font-semibold px-2 py-0.5 transition duration-200">
+                ERP Profile ↗
+            </a>
             <button type="button" onclick="this.closest('.wa-contact-row').querySelector('.wa-edit-form').classList.toggle('hidden')"
                 class="text-[10px] text-indigo-400 hover:text-indigo-300 font-semibold px-2 py-0.5 transition duration-200">
                 Edit
