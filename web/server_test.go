@@ -702,4 +702,3 @@ func TestPostWhatsAppSettings_Success(t *testing.T) {
 		t.Errorf("expected bot_config to contain agent_test, got %s", string(capturedArgs[3].([]byte)))
 	}
 }
-

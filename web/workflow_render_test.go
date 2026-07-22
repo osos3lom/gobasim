@@ -16,7 +16,7 @@ import (
 // list-editor data-init JSON, sub-agent checkboxes, and the $.Delegate* /
 // $.History* page keys — against template execution errors and wrong pipelines.
 func TestWorkflowTemplateRendersFourBlocks(t *testing.T) {
-	tmpl := template.Must(template.New("layout").ParseFS(templatesFS, "templates/*.html"))
+	tmpl := template.Must(template.New("layout").Funcs(templateFuncs).ParseFS(templatesFS, "templates/*.html"))
 
 	row := agentRow{
 		Agent: database.Agent{

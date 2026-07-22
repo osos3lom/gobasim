@@ -326,6 +326,42 @@ func (m *WhatsAppManager) StreamQRToState(ctx context.Context, qrChan <-chan wha
 	}
 }
 
+// ResolvePhoneForLIDForClient looks up the real phone-number JID for a
+// WhatsApp LID (linked ID) user — the opaque id WhatsApp now assigns as the
+// primary chat identifier for many contacts (types.AddressingModeLID)
+// instead of their phone number, as part of its privacy-addressing rollout.
+// whatsmeow learns these LID<->PN mappings on its own (contact sync, message
+// processing) and persists them in its device store's whatsmeow_lid_map
+// table; this just exposes that already-known mapping so callers (ERP
+// identity resolution) don't need a manual operator-entered phone override
+// for contacts whatsmeow already has an answer for. Returns ("", false) if
+// the client isn't ready or no mapping is known yet — callers should fall
+// back to asking the operator (see internal/erp/link.go's phone-override
+// flow). Exported as a free function (not just the WhatsAppManager method
+// below) so callers holding a raw *whatsmeow.Client — like main.go's inbound
+// message handler, which receives the client directly rather than the
+// manager wrapper — can reuse the same lookup.
+func ResolvePhoneForLIDForClient(ctx context.Context, client *whatsmeow.Client, lidUser string) (string, bool) {
+	if client == nil || client.Store == nil || client.Store.LIDs == nil {
+		return "", false
+	}
+	pn, err := client.Store.LIDs.GetPNForLID(ctx, types.JID{User: lidUser, Server: types.HiddenUserServer})
+	if err != nil || pn.IsEmpty() {
+		return "", false
+	}
+	return pn.User, true
+}
+
+// ResolvePhoneForLID is the WhatsAppManager-level convenience wrapper around
+// ResolvePhoneForLIDForClient, used by dashboard call sites that hold a
+// *WhatsAppManager rather than a raw client.
+func (m *WhatsAppManager) ResolvePhoneForLID(ctx context.Context, lidUser string) (string, bool) {
+	m.mu.RLock()
+	client := m.Client
+	m.mu.RUnlock()
+	return ResolvePhoneForLIDForClient(ctx, client, lidUser)
+}
+
 // SendTextMessage sends a plain-text WhatsApp message. Consolidates what
 // main.go's sendTextReply constructs inline (a *waE2E.Message with just the
 // Conversation field set) into the one place every whatsmeow interaction is

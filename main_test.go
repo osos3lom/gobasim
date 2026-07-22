@@ -18,6 +18,11 @@ func TestNewContactParamsDefaultsDisabled(t *testing.T) {
 	}{
 		{"with push name", "966500000001@s.whatsapp.net", "Abu Khalid", "Abu Khalid"},
 		{"falls back to phone", "966500000001@s.whatsapp.net", "", "966500000001"},
+		// A LID chat_id's digits are an opaque WhatsApp id, not a phone
+		// number — falling back to them as the contact's name would leak
+		// that format into the dashboard (the operator-facing name field is
+		// shown unconditionally, unlike waDisplayPhone's chat_id fallback).
+		{"lid falls back to generic name, not lid digits", "90727124070644@lid", "", "New WhatsApp contact"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

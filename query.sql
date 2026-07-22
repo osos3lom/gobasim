@@ -200,7 +200,8 @@ SELECT * FROM (
         m.sender AS last_sender, m.created_at AS last_message_at,
         c.name AS contact_name, c.enabled AS contact_enabled, c.agent_id AS contact_agent_id,
         c.erp_display_name AS contact_erp_display_name, c.erp_org_id AS contact_erp_org_id,
-        c.erp_role AS contact_erp_role, c.erp_unresolved_reason AS contact_erp_unresolved_reason
+        c.erp_role AS contact_erp_role, c.erp_unresolved_reason AS contact_erp_unresolved_reason,
+        c.erp_phone_override AS contact_erp_phone_override
     FROM wa_messages m
     LEFT JOIN wa_contacts c ON c.chat_id = m.chat_id
     ORDER BY m.chat_id, m.created_at DESC, m.id DESC

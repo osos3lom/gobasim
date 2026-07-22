@@ -981,13 +981,14 @@ func (q *Queries) ListRecentWaActivity(ctx context.Context, limit int32) ([]WaAc
 }
 
 const listWaChatsSummary = `-- name: ListWaChatsSummary :many
-SELECT chat_id, last_message, last_direction, last_sender, last_message_at, contact_name, contact_enabled, contact_agent_id, contact_erp_display_name, contact_erp_org_id, contact_erp_role, contact_erp_unresolved_reason FROM (
+SELECT chat_id, last_message, last_direction, last_sender, last_message_at, contact_name, contact_enabled, contact_agent_id, contact_erp_display_name, contact_erp_org_id, contact_erp_role, contact_erp_unresolved_reason, contact_erp_phone_override FROM (
     SELECT DISTINCT ON (m.chat_id)
         m.chat_id, m.content AS last_message, m.direction AS last_direction,
         m.sender AS last_sender, m.created_at AS last_message_at,
         c.name AS contact_name, c.enabled AS contact_enabled, c.agent_id AS contact_agent_id,
         c.erp_display_name AS contact_erp_display_name, c.erp_org_id AS contact_erp_org_id,
-        c.erp_role AS contact_erp_role, c.erp_unresolved_reason AS contact_erp_unresolved_reason
+        c.erp_role AS contact_erp_role, c.erp_unresolved_reason AS contact_erp_unresolved_reason,
+        c.erp_phone_override AS contact_erp_phone_override
     FROM wa_messages m
     LEFT JOIN wa_contacts c ON c.chat_id = m.chat_id
     ORDER BY m.chat_id, m.created_at DESC, m.id DESC
@@ -1008,6 +1009,7 @@ type ListWaChatsSummaryRow struct {
 	ContactErpOrgID            *string     `json:"contact_erp_org_id"`
 	ContactErpRole             *string     `json:"contact_erp_role"`
 	ContactErpUnresolvedReason *string     `json:"contact_erp_unresolved_reason"`
+	ContactErpPhoneOverride    *string     `json:"contact_erp_phone_override"`
 }
 
 func (q *Queries) ListWaChatsSummary(ctx context.Context) ([]ListWaChatsSummaryRow, error) {
@@ -1032,6 +1034,7 @@ func (q *Queries) ListWaChatsSummary(ctx context.Context) ([]ListWaChatsSummaryR
 			&i.ContactErpOrgID,
 			&i.ContactErpRole,
 			&i.ContactErpUnresolvedReason,
+			&i.ContactErpPhoneOverride,
 		); err != nil {
 			return nil, err
 		}

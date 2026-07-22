@@ -333,7 +333,12 @@
     <div class="flex items-center justify-between">
         <div>
             <div class="font-semibold text-white text-sm">{{.Name}}</div>
-            <div class="text-xs text-gray-400 mt-0.5">{{.ChatID}}</div>
+            {{$phone := waDisplayPhone .ChatID .ErpPhoneOverride}}
+            {{if $phone}}
+            <div class="text-xs text-gray-400 mt-0.5">{{$phone}}</div>
+            {{else}}
+            <div class="text-xs text-amber-500/80 mt-0.5 italic">Phone not yet linked</div>
+            {{end}}
             {{if .ErpUid}}
             <div class="text-[10px] text-emerald-400 mt-1">
                 🔗 {{.ErpDisplayName}}{{if .ErpRole}} · {{.ErpRole}}{{end}}{{if .ErpOrgID}} · org {{.ErpOrgID}}{{end}}
@@ -456,7 +461,7 @@
     class="w-full text-left px-4 py-3 border-b border-indigo-950/30 hover:bg-slate-900/40 transition duration-200">
     <div class="flex items-center justify-between gap-2">
         <div class="flex items-center gap-1.5 min-w-0">
-            <span class="font-semibold text-white text-sm truncate">{{if .ContactName}}{{.ContactName}}{{else}}{{.ChatID}}{{end}}</span>
+            <span class="font-semibold text-white text-sm truncate">{{if .ContactName}}{{.ContactName}}{{else}}{{$p := waDisplayPhone .ChatID .ContactErpPhoneOverride}}{{if $p}}{{$p}}{{else}}Unlinked contact{{end}}{{end}}</span>
             {{if .ContactEnabled}}
             <span class="flex h-2 w-2 shrink-0 relative" title="AI Agent Active">
                 <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
@@ -500,9 +505,10 @@
 {{define "wa_pilot_panel"}}
 <div id="wa-pilot-panel" class="space-y-6">
     <div class="pb-4 border-b border-indigo-950/50">
-        <div class="text-xs text-gray-500 font-semibold tracking-wider uppercase">Selected Workspace JID</div>
-        <div class="text-sm font-bold text-white truncate">{{.WaContact.ChatID}}</div>
-        
+        <div class="text-xs text-gray-500 font-semibold tracking-wider uppercase">Contact Phone</div>
+        {{$phone := waDisplayPhone .WaContact.ChatID .WaContact.ErpPhoneOverride}}
+        <div class="text-sm font-bold text-white truncate">{{if $phone}}{{$phone}}{{else}}Unlinked — set phone below{{end}}</div>
+
         {{if .WaContact.ErpUid}}
         <div class="mt-2 inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-indigo-950 border border-indigo-900 text-indigo-400 text-xs font-bold uppercase tracking-wider">
             👤 {{.WaContact.ErpDisplayName}}{{if .WaContact.ErpRole}} · {{.WaContact.ErpRole}}{{end}}{{if .WaContact.ErpOrgID}} · org {{.WaContact.ErpOrgID}}{{end}}
@@ -628,7 +634,8 @@
 <div class="flex flex-col h-full">
     <div class="px-4 py-3 border-b border-indigo-950/50 shrink-0 flex items-center justify-between">
         <div>
-            <h4 class="font-bold text-white text-sm">{{.ChatID}}</h4>
+            {{$phone := waDisplayPhone .ChatID .ContactErpPhoneOverride}}
+            <h4 class="font-bold text-white text-sm">{{if $phone}}{{$phone}}{{else}}Unlinked contact{{end}}</h4>
             <p class="text-[10px] text-gray-500">Showing messages logged since Sawt started running &mdash; not full WhatsApp history.</p>
         </div>
         {{if .WindowOpen}}

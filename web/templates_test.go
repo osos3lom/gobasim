@@ -15,7 +15,7 @@ import (
 // defines a uniquely-named content block, selected by layout.html via the
 // "Page" field already passed into ExecuteTemplate by every handler.
 func TestPageTemplatesRenderDistinctContent(t *testing.T) {
-	tmpl := template.Must(template.New("layout").ParseFS(templatesFS, "templates/*.html"))
+	tmpl := template.Must(template.New("layout").Funcs(templateFuncs).ParseFS(templatesFS, "templates/*.html"))
 
 	cases := []struct {
 		file    string

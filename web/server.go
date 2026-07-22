@@ -101,8 +101,12 @@ type BlueprintDefaults struct {
 // (not re-constructed) here so "send as voice note" shares one TTS provider
 // fallback chain instead of double-initializing a second one.
 func NewServer(cfg *config.Config, queries *database.Queries, waMgr *waClient.WhatsAppManager, ttsOrch *speech.TTSOrchestrator) *Server {
-	// Parse embedded templates
-	tmpl := template.Must(template.New("layout").ParseFS(templatesFS, "templates/*.html"))
+	// Parse embedded templates. Funcs must be registered before ParseFS —
+	// html/template resolves {{funcName ...}} calls at parse time. Any test
+	// that independently reparses templatesFS (templates_test.go,
+	// whatsapp_render_test.go, workflow_render_test.go) must use the same
+	// templateFuncs, or parsing panics with "function ... not defined".
+	tmpl := template.Must(template.New("layout").Funcs(templateFuncs).ParseFS(templatesFS, "templates/*.html"))
 
 	static, err := fs.Sub(staticFS, "static")
 	if err != nil {
@@ -605,6 +609,57 @@ func agentIDValue(id *string) string {
 	return *id
 }
 
+// templateFuncs is registered on every *template.Template built from
+// templatesFS — both NewServer's real one and any test that independently
+// reparses the embedded templates (see NewServer's comment above).
+var templateFuncs = template.FuncMap{
+	"waDisplayPhone": waDisplayPhone,
+}
+
+// waDisplayPhone is a template func: it turns a contact's identity into an
+// operator-facing phone number, never the raw chat_id — WhatsApp assigns
+// many contacts an opaque LID (e.g. "90727124070644@lid") as their primary
+// chat identifier instead of exposing their phone number (see
+// internal/erp/link.go's LIDResolver), and that opaque id must never leak
+// into the UI as if it were meaningful to a human operator.
+//
+// Precedence: erp_phone_override (an operator-entered override, OR a phone
+// auto-discovered via the LID resolver and persisted to the same column —
+// see ResolveAndPersistContactIdentity) wins when set; otherwise, for a
+// normal (non-LID) WhatsApp JID the chat_id's user part already IS the phone
+// number in international-digits form. For a LID chat_id with no override
+// yet, there is no phone to show — callers must handle "" themselves (e.g.
+// a distinct "Unlinked" label), not fall back to the chat_id.
+func waDisplayPhone(chatID string, phoneOverride *string) string {
+	if phoneOverride != nil && strings.TrimSpace(*phoneOverride) != "" {
+		return formatPhoneDisplay(strings.TrimSpace(*phoneOverride))
+	}
+	if strings.HasSuffix(strings.ToLower(chatID), "@lid") {
+		return ""
+	}
+	return formatPhoneDisplay(strings.Split(chatID, "@")[0])
+}
+
+// formatPhoneDisplay converts a phone number stored in international digits
+// (e.g. "966546906905", the format ERP identity resolution and WhatsApp JIDs
+// both use) into the local format Saudi operators actually recognize (e.g.
+// "0546906905" — no country code, leading 0). This deployment is
+// Saudi-centric (see cmd/erpcheck's "9665XXXXXXXX" convention and the
+// default org's phone examples), so 966 is the one country code with a
+// known local-format rule; other recognized-but-unmapped numbers are shown
+// with a "+" prefix rather than guessed at, so they're at least readable as
+// a phone number instead of opaque digits.
+func formatPhoneDisplay(phone string) string {
+	digits := strings.TrimPrefix(strings.TrimSpace(phone), "+")
+	if digits == "" {
+		return ""
+	}
+	if strings.HasPrefix(digits, "966") && len(digits) == 12 {
+		return "0" + digits[3:]
+	}
+	return "+" + digits
+}
+
 // erpUnresolvedLabel turns a wa_contacts.erp_unresolved_reason value into an
 // operator-facing label. Same *string-vs-string issue as agentIDValue: the
 // template can't do {{eq .ErpUnresolvedReason "no_match"}} directly, so the
@@ -839,7 +894,7 @@ func (s *Server) handlePostSetWaContactErpOverride(w http.ResponseWriter, r *htt
 	}
 
 	if s.erpClient != nil {
-		if _, err := erp.ResolveAndPersistContactIdentity(r.Context(), s.erpClient, s.queries, chatID, contact.ErpPhoneOverride); err != nil {
+		if _, err := erp.ResolveAndPersistContactIdentity(r.Context(), s.erpClient, s.queries, chatID, contact.ErpPhoneOverride, s.waMgr); err != nil {
 			monitor.ReportError(r.Context(), "identity", err)
 		} else if refreshed, err := s.queries.GetWaContact(r.Context(), chatID); err == nil {
 			contact = refreshed
@@ -866,7 +921,7 @@ func (s *Server) handlePostResolveWaContactIdentity(w http.ResponseWriter, r *ht
 		return
 	}
 
-	if _, err := erp.ResolveAndPersistContactIdentity(r.Context(), s.erpClient, s.queries, chatID, contact.ErpPhoneOverride); err != nil {
+	if _, err := erp.ResolveAndPersistContactIdentity(r.Context(), s.erpClient, s.queries, chatID, contact.ErpPhoneOverride, s.waMgr); err != nil {
 		monitor.ReportError(r.Context(), "identity", err)
 		http.Error(w, "ERP resolution failed: "+err.Error(), http.StatusBadGateway)
 		return
@@ -893,7 +948,7 @@ func (s *Server) handlePostSendWaLinkInvite(w http.ResponseWriter, r *http.Reque
 
 	var identity *erp.Identity
 	if s.erpClient != nil {
-		if linkResult, lErr := erp.ResolveAndPersistContactIdentity(r.Context(), s.erpClient, s.queries, chatID, contact.ErpPhoneOverride); lErr == nil && linkResult != nil {
+		if linkResult, lErr := erp.ResolveAndPersistContactIdentity(r.Context(), s.erpClient, s.queries, chatID, contact.ErpPhoneOverride, s.waMgr); lErr == nil && linkResult != nil {
 			identity = linkResult.Identity
 		}
 	}
@@ -1045,11 +1100,15 @@ func (s *Server) handleGetWaMessagesFragment(w http.ResponseWriter, r *http.Requ
 	// We only load the full layout when not paginating historical messages
 	if beforeSeq > 0 {
 		s.renderTemplate(w, "whatsapp.html", map[string]interface{}{
-			"ChatID":      chatID,
-			"Messages":    messages,
-			"CSRFToken":   s.ensureCSRFToken(w, r),
-			"PartialView": "messages",
-			"Partial":     true,
+			"ChatID": chatID,
+			// A pagination reload doesn't re-fetch the contact row, so the
+			// thread header falls back to deriving the phone from chatID
+			// alone (nil override) — see waDisplayPhone.
+			"ContactErpPhoneOverride": (*string)(nil),
+			"Messages":                messages,
+			"CSRFToken":               s.ensureCSRFToken(w, r),
+			"PartialView":             "messages",
+			"Partial":                 true,
 		})
 		return
 	}
@@ -1092,17 +1151,18 @@ func (s *Server) handleGetWaMessagesFragment(w http.ResponseWriter, r *http.Requ
 	}
 
 	s.renderTemplate(w, "whatsapp.html", map[string]interface{}{
-		"ChatID":             chatID,
-		"Messages":           messages,
-		"CSRFToken":          s.ensureCSRFToken(w, r),
-		"WindowOpen":         windowOpen,
-		"WindowClosesIn":     windowClosesIn,
-		"WaContact":          contact,
-		"PublishedAgents":    s.fetchPublishedAgents(r.Context()),
-		"AgentIDStr":         agentIDValue(contact.AgentID),
-		"ErpUnresolvedLabel": erpUnresolvedLabel(contact.ErpUnresolvedReason),
-		"PartialView":        "thread_pilot",
-		"Partial":            true,
+		"ChatID":                  chatID,
+		"ContactErpPhoneOverride": contact.ErpPhoneOverride,
+		"Messages":                messages,
+		"CSRFToken":               s.ensureCSRFToken(w, r),
+		"WindowOpen":              windowOpen,
+		"WindowClosesIn":          windowClosesIn,
+		"WaContact":               contact,
+		"PublishedAgents":         s.fetchPublishedAgents(r.Context()),
+		"AgentIDStr":              agentIDValue(contact.AgentID),
+		"ErpUnresolvedLabel":      erpUnresolvedLabel(contact.ErpUnresolvedReason),
+		"PartialView":             "thread_pilot",
+		"Partial":                 true,
 	})
 }
 

@@ -424,7 +424,18 @@ func seedAdminUser(ctx context.Context, pool *pgxpool.Pool, queries *database.Qu
 func newContactParams(chatJID, pushName string, bp web.BlueprintDefaults) database.CreateOrUpdateWaContactParams {
 	name := pushName
 	if name == "" {
-		name = strings.Split(chatJID, "@")[0]
+		if strings.HasSuffix(strings.ToLower(chatJID), "@lid") {
+			// WhatsApp's opaque LID digits (see internal/erp/link.go's
+			// LIDResolver) aren't a human-readable identifier — falling back
+			// to them here would leak the same format the dashboard's
+			// waDisplayPhone helper otherwise keeps out of the operator UI.
+			// The contact's real phone (if whatsmeow already knows it) still
+			// gets persisted separately via ResolveAndPersistContactIdentity
+			// moments later in handleIncomingMessage.
+			name = "New WhatsApp contact"
+		} else {
+			name = strings.Split(chatJID, "@")[0]
+		}
 	}
 	var agentIDPtr *string
 	if bp.DefaultAgentID != "" {
@@ -441,6 +452,19 @@ func newContactParams(chatJID, pushName string, bp web.BlueprintDefaults) databa
 		AgentID:        agentIDPtr,
 		PromptOverride: promptOverridePtr,
 	}
+}
+
+// clientLIDResolver adapts a raw *whatsmeow.Client to erp.LIDResolver.
+// handleIncomingMessage only receives the raw client (not the
+// *waClient.WhatsAppManager wrapper the dashboard uses), so it can't reuse
+// WhatsAppManager.ResolvePhoneForLID directly — this wraps the same
+// underlying lookup (waClient.ResolvePhoneForLIDForClient) instead.
+type clientLIDResolver struct {
+	client *whatsmeow.Client
+}
+
+func (r clientLIDResolver) ResolvePhoneForLID(ctx context.Context, lidUser string) (string, bool) {
+	return waClient.ResolvePhoneForLIDForClient(ctx, r.client, lidUser)
 }
 
 func handleIncomingMessage(
@@ -535,7 +559,7 @@ func handleIncomingMessage(
 
 	// Cascading ERP Identity Resolution check
 	var identity *erp.Identity
-	linkResult, lErr := erp.ResolveAndPersistContactIdentity(ctx, erpClient, queries, evt.Info.Chat.String(), contact.ErpPhoneOverride)
+	linkResult, lErr := erp.ResolveAndPersistContactIdentity(ctx, erpClient, queries, evt.Info.Chat.String(), contact.ErpPhoneOverride, clientLIDResolver{client})
 	if lErr != nil {
 		trace.Logf(ctx, "Inbound: Identity resolution warning for %s: %v", evt.Info.Chat.String(), lErr)
 	} else if linkResult != nil {

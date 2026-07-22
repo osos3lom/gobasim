@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"sawt-go/database"
@@ -67,33 +68,60 @@ func erpIdentityServer(t *testing.T, respond func(phone string) string) (*httpte
 
 // capturingQueries returns a *database.Queries whose UpdateWaContactErpLink
 // calls are appended to captured, decoded back into the params struct so
-// tests can assert on exactly what would have been persisted.
+// tests can assert on exactly what would have been persisted. Any
+// UpdateWaContactErpOverride call (issued when a LID phone is
+// auto-discovered — see capturingQueriesWithOverrides for tests that need to
+// assert on it) is a no-op here.
 func capturingQueries(captured *[]database.UpdateWaContactErpLinkParams) *database.Queries {
+	return capturingQueriesWithOverrides(captured, nil)
+}
+
+// capturingQueriesWithOverrides is capturingQueries plus capturing of
+// UpdateWaContactErpOverride calls (the phone string persisted) into
+// overrides, when non-nil. The two queries are distinguished by their SQL
+// text's INSERT column list ("INSERT INTO wa_contacts (chat_id, erp_uid,
+// ..." vs "..., erp_phone_override, ...") — NOT the RETURNING clause, which
+// lists every wa_contacts column (including erp_uid AND erp_phone_override)
+// on both queries and so can't discriminate between them.
+func capturingQueriesWithOverrides(captured *[]database.UpdateWaContactErpLinkParams, overrides *[]string) *database.Queries {
 	dbtx := &mockDBTX{
 		queryRowFunc: func(ctx context.Context, sql string, args ...interface{}) pgx.Row {
+			if strings.Contains(sql, "INSERT INTO wa_contacts (chat_id, erp_uid") {
+				return &mockRow{
+					scanFunc: func(dest ...interface{}) error {
+						// arg order matches UpdateWaContactErpLinkParams field
+						// order: ChatID, ErpUid, ErpDisplayName, ErpOrgID, ErpRole, ErpUnresolvedReason.
+						params := database.UpdateWaContactErpLinkParams{ChatID: args[0].(string)}
+						if v, _ := args[1].(*string); v != nil {
+							params.ErpUid = v
+						}
+						if v, _ := args[2].(*string); v != nil {
+							params.ErpDisplayName = v
+						}
+						if v, _ := args[3].(*string); v != nil {
+							params.ErpOrgID = v
+						}
+						if v, _ := args[4].(*string); v != nil {
+							params.ErpRole = v
+						}
+						if v, _ := args[5].(*string); v != nil {
+							params.ErpUnresolvedReason = v
+						}
+						*captured = append(*captured, params)
+						// ResolveAndPersistContactIdentity discards the returned
+						// row (only checks the error), so Scan needn't populate dest.
+						return nil
+					},
+				}
+			}
+			// UpdateWaContactErpOverride: args are (ChatID, ErpPhoneOverride).
 			return &mockRow{
 				scanFunc: func(dest ...interface{}) error {
-					// arg order matches UpdateWaContactErpLinkParams field
-					// order: ChatID, ErpUid, ErpDisplayName, ErpOrgID, ErpRole, ErpUnresolvedReason.
-					params := database.UpdateWaContactErpLinkParams{ChatID: args[0].(string)}
-					if v, _ := args[1].(*string); v != nil {
-						params.ErpUid = v
+					if overrides != nil {
+						if v, _ := args[1].(*string); v != nil {
+							*overrides = append(*overrides, *v)
+						}
 					}
-					if v, _ := args[2].(*string); v != nil {
-						params.ErpDisplayName = v
-					}
-					if v, _ := args[3].(*string); v != nil {
-						params.ErpOrgID = v
-					}
-					if v, _ := args[4].(*string); v != nil {
-						params.ErpRole = v
-					}
-					if v, _ := args[5].(*string); v != nil {
-						params.ErpUnresolvedReason = v
-					}
-					*captured = append(*captured, params)
-					// ResolveAndPersistContactIdentity discards the returned
-					// row (only checks the error), so Scan needn't populate dest.
 					return nil
 				},
 			}
@@ -117,7 +145,7 @@ func TestResolveAndPersistContactIdentity_UsesJIDPhoneByDefault(t *testing.T) {
 	var captured []database.UpdateWaContactErpLinkParams
 	queries := capturingQueries(&captured)
 
-	_, err := ResolveAndPersistContactIdentity(context.Background(), client, queries, "971501234567@s.whatsapp.net", nil)
+	_, err := ResolveAndPersistContactIdentity(context.Background(), client, queries, "971501234567@s.whatsapp.net", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -135,7 +163,7 @@ func TestResolveAndPersistContactIdentity_OverridePhoneTakesPrecedence(t *testin
 	queries := capturingQueries(&captured)
 
 	override := "966500000000"
-	_, err := ResolveAndPersistContactIdentity(context.Background(), client, queries, "971501234567@s.whatsapp.net", &override)
+	_, err := ResolveAndPersistContactIdentity(context.Background(), client, queries, "971501234567@s.whatsapp.net", &override, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -145,7 +173,7 @@ func TestResolveAndPersistContactIdentity_OverridePhoneTakesPrecedence(t *testin
 
 	// A blank/whitespace override must NOT take precedence over the JID phone.
 	blank := "   "
-	_, err = ResolveAndPersistContactIdentity(context.Background(), client, queries, "971501234567@s.whatsapp.net", &blank)
+	_, err = ResolveAndPersistContactIdentity(context.Background(), client, queries, "971501234567@s.whatsapp.net", &blank, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -162,7 +190,7 @@ func TestResolveAndPersistContactIdentity_NoMatch(t *testing.T) {
 	var captured []database.UpdateWaContactErpLinkParams
 	queries := capturingQueries(&captured)
 
-	result, err := ResolveAndPersistContactIdentity(context.Background(), client, queries, "971501234567@s.whatsapp.net", nil)
+	result, err := ResolveAndPersistContactIdentity(context.Background(), client, queries, "971501234567@s.whatsapp.net", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -191,7 +219,7 @@ func TestResolveAndPersistContactIdentity_PhoneUnverifiedStillPersistsIdentity(t
 	var captured []database.UpdateWaContactErpLinkParams
 	queries := capturingQueries(&captured)
 
-	result, err := ResolveAndPersistContactIdentity(context.Background(), client, queries, "971501234567@s.whatsapp.net", nil)
+	result, err := ResolveAndPersistContactIdentity(context.Background(), client, queries, "971501234567@s.whatsapp.net", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -224,7 +252,7 @@ func TestResolveAndPersistContactIdentity_CleanMatchPersistsAllFields(t *testing
 	var captured []database.UpdateWaContactErpLinkParams
 	queries := capturingQueries(&captured)
 
-	result, err := ResolveAndPersistContactIdentity(context.Background(), client, queries, "971501234567@s.whatsapp.net", nil)
+	result, err := ResolveAndPersistContactIdentity(context.Background(), client, queries, "971501234567@s.whatsapp.net", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -247,6 +275,123 @@ func TestResolveAndPersistContactIdentity_CleanMatchPersistsAllFields(t *testing
 	}
 }
 
+// fakeLIDResolver is a minimal erp.LIDResolver for tests: it returns a fixed
+// (phone, ok) pair regardless of which lidUser it's asked about.
+type fakeLIDResolver struct {
+	phone string
+	ok    bool
+}
+
+func (f fakeLIDResolver) ResolvePhoneForLID(ctx context.Context, lidUser string) (string, bool) {
+	return f.phone, f.ok
+}
+
+// A @lid chat with no manual override must use the phone the LIDResolver
+// already knows (whatsmeow's own learned mapping), not the LID's opaque
+// digits — and a match found via the resolver is a clean resolution, not
+// "lid_unlinked" (this exact scenario broke before the resolver was wired
+// in: WhatsApp assigns LIDs as the default chat identifier for many
+// contacts, and the app was resolving against the meaningless LID digits
+// instead of the phone whatsmeow already had cached).
+func TestResolveAndPersistContactIdentity_LIDResolvesViaWhatsmeowStore(t *testing.T) {
+	server, gotPhone := erpIdentityServer(t, func(phone string) string {
+		return `{"resolved": true, "identity": {"uid": "u1", "phone": "` + phone + `", "role": "manager", "displayName": "Osama", "orgIds": ["org1"]}}`
+	})
+	client := NewClient(server.URL, "secret")
+	var captured []database.UpdateWaContactErpLinkParams
+	var overrides []string
+	queries := capturingQueriesWithOverrides(&captured, &overrides)
+
+	resolver := fakeLIDResolver{phone: "966546906905", ok: true}
+	result, err := ResolveAndPersistContactIdentity(context.Background(), client, queries, "90727124070644@lid", nil, resolver)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if *gotPhone != "966546906905" {
+		t.Errorf("expected ERP to be called with the resolver's phone %q, got %q", "966546906905", *gotPhone)
+	}
+	if result.Reason != "" {
+		t.Errorf("expected a clean match (empty reason) when the resolver finds a phone, got %q", result.Reason)
+	}
+	if len(captured) != 1 || strVal(captured[0].ErpUid) != "u1" {
+		t.Fatalf("expected identity to be persisted, got %+v", captured)
+	}
+	// The auto-discovered phone must be persisted to erp_phone_override so
+	// the dashboard can display it without a live whatsmeow lookup.
+	if len(overrides) != 1 || overrides[0] != "966546906905" {
+		t.Errorf("expected the resolved phone to be auto-persisted as erp_phone_override, got %v", overrides)
+	}
+}
+
+// A manual operator override must still win over the LID resolver — the
+// operator is explicitly correcting a phone, which should not be
+// second-guessed by whatsmeow's own mapping.
+func TestResolveAndPersistContactIdentity_OverrideWinsOverLIDResolver(t *testing.T) {
+	server, gotPhone := erpIdentityServer(t, func(phone string) string {
+		return `{"resolved": true, "identity": {"uid": "u1", "phone": "` + phone + `", "role": "manager", "displayName": "Osama", "orgIds": ["org1"]}}`
+	})
+	client := NewClient(server.URL, "secret")
+	var captured []database.UpdateWaContactErpLinkParams
+	queries := capturingQueries(&captured)
+
+	resolver := fakeLIDResolver{phone: "966546906905", ok: true}
+	override := "966500000099"
+	_, err := ResolveAndPersistContactIdentity(context.Background(), client, queries, "90727124070644@lid", &override, resolver)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if *gotPhone != override {
+		t.Errorf("expected the operator override %q to win over the resolver's phone, got %q", override, *gotPhone)
+	}
+}
+
+// When the resolver has no mapping yet (whatsmeow hasn't learned this LID's
+// phone), behavior must fall back to today's lid_unlinked signal rather than
+// resolving against the meaningless LID digits.
+func TestResolveAndPersistContactIdentity_LIDUnlinkedWhenResolverHasNoMapping(t *testing.T) {
+	server, gotPhone := erpIdentityServer(t, func(phone string) string {
+		return `{"resolved": false}`
+	})
+	client := NewClient(server.URL, "secret")
+	var captured []database.UpdateWaContactErpLinkParams
+	queries := capturingQueries(&captured)
+
+	resolver := fakeLIDResolver{phone: "", ok: false}
+	result, err := ResolveAndPersistContactIdentity(context.Background(), client, queries, "90727124070644@lid", nil, resolver)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if *gotPhone != "90727124070644" {
+		t.Errorf("expected fallback to the LID digits when unresolved, got %q", *gotPhone)
+	}
+	if result.Reason != UnresolvedLidUnlinked {
+		t.Errorf("expected reason %q, got %q", UnresolvedLidUnlinked, result.Reason)
+	}
+	if len(captured) != 1 || strVal(captured[0].ErpUnresolvedReason) != UnresolvedLidUnlinked {
+		t.Fatalf("expected persisted reason %q, got %+v", UnresolvedLidUnlinked, captured)
+	}
+}
+
+// A nil LIDResolver (e.g. WhatsApp not yet connected) must behave exactly
+// like before this resolver existed: an unresolvable @lid falls back to
+// lid_unlinked without panicking.
+func TestResolveAndPersistContactIdentity_NilLIDResolverIsSafe(t *testing.T) {
+	server, _ := erpIdentityServer(t, func(phone string) string {
+		return `{"resolved": false}`
+	})
+	client := NewClient(server.URL, "secret")
+	var captured []database.UpdateWaContactErpLinkParams
+	queries := capturingQueries(&captured)
+
+	result, err := ResolveAndPersistContactIdentity(context.Background(), client, queries, "90727124070644@lid", nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Reason != UnresolvedLidUnlinked {
+		t.Errorf("expected reason %q, got %q", UnresolvedLidUnlinked, result.Reason)
+	}
+}
+
 func TestResolveAndPersistContactIdentity_ErpErrorIsNotPersisted(t *testing.T) {
 	server, _ := erpIdentityServer(t, func(phone string) string {
 		return `not json`
@@ -255,7 +400,7 @@ func TestResolveAndPersistContactIdentity_ErpErrorIsNotPersisted(t *testing.T) {
 	var captured []database.UpdateWaContactErpLinkParams
 	queries := capturingQueries(&captured)
 
-	_, err := ResolveAndPersistContactIdentity(context.Background(), client, queries, "971501234567@s.whatsapp.net", nil)
+	_, err := ResolveAndPersistContactIdentity(context.Background(), client, queries, "971501234567@s.whatsapp.net", nil, nil)
 	if err == nil {
 		t.Fatal("expected an error when the ERP response is malformed")
 	}
