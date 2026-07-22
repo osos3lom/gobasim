@@ -1,18 +1,72 @@
 {{template "layout" .}}
 
 {{define "workflow-content"}}
-<div class="space-y-8 max-w-5xl">
+<div class="space-y-6 max-w-5xl">
 
-    <!-- Header Description -->
-    <div class="flex items-center justify-between gap-4">
-        <p class="text-sm text-gray-400">Configure each agent's compute, prompt, capabilities, and voice. Changes apply immediately to WhatsApp &mdash; the engine re-reads the agent row per message, no restart required.</p>
+    <!-- Operations Header KPI Strip -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div class="glass p-4 rounded-2xl border border-indigo-950/40 relative overflow-hidden">
+            <div class="flex items-center justify-between mb-1">
+                <span class="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Agent SOULs</span>
+                <span class="text-xs text-indigo-400 font-bold">⚙️ Configured</span>
+            </div>
+            <div class="text-xl font-extrabold text-white">{{if .Agents}}{{len .Agents}}{{else}}0{{end}} <span class="text-xs text-gray-500 font-normal">agents</span></div>
+            <div class="text-[11px] text-gray-500 mt-0.5 truncate">Active Agents &amp; Specialized Brains</div>
+        </div>
+
+        <div class="glass p-4 rounded-2xl border border-indigo-950/40 relative overflow-hidden">
+            <div class="flex items-center justify-between mb-1">
+                <span class="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Autonomous Pilots</span>
+                <span class="text-xs text-emerald-400 font-bold">🤖 Active</span>
+            </div>
+            <div class="text-xl font-extrabold text-white">{{.Metrics.AiActiveCount}} <span class="text-xs text-gray-500 font-normal">/ {{.Metrics.TotalContacts}}</span></div>
+            <div class="text-[11px] text-gray-500 mt-0.5 truncate">Authorized WhatsApp Contacts</div>
+        </div>
+
+        <div class="glass p-4 rounded-2xl border border-indigo-950/40 relative overflow-hidden">
+            <div class="flex items-center justify-between mb-1">
+                <span class="text-[11px] font-bold text-gray-400 uppercase tracking-wider">ERP Link Ratio</span>
+                <span class="text-xs text-emerald-400 font-bold">🔗 {{.Metrics.ErpLinkRatio}}%</span>
+            </div>
+            <div class="text-xl font-extrabold text-white">{{.Metrics.ErpLinkedCount}} <span class="text-xs text-gray-500 font-normal">matched</span></div>
+            <div class="text-[11px] text-gray-500 mt-0.5 truncate">Mapped Mshalia ERP Identities</div>
+        </div>
+
+        <div class="glass p-4 rounded-2xl border border-indigo-950/40 relative overflow-hidden">
+            <div class="flex items-center justify-between mb-1">
+                <span class="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Provider Cascade</span>
+                <span class="text-xs text-emerald-400 font-bold">⚡ Ready</span>
+            </div>
+            <div class="text-xs font-bold text-white mt-1 uppercase">NIM &rarr; OpenAI &rarr; Groq</div>
+            <div class="text-[11px] text-gray-500 mt-0.5 truncate">Multi-Tier LLM &amp; Voice Engine</div>
+        </div>
+    </div>
+
+    <!-- Tab state (radio inputs) -->
+    <input type="radio" name="wf-tab" id="wf-tab-builder" class="hidden peer/wf-builder" checked>
+    <input type="radio" name="wf-tab" id="wf-tab-stream" class="hidden peer/wf-stream">
+    <input type="radio" name="wf-tab" id="wf-tab-inspector" class="hidden peer/wf-inspector">
+
+    <!-- Header & Tab Nav -->
+    <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-indigo-950/50 pb-3">
+        <div>
+            <label for="wf-tab-builder" class="inline-block mr-1 px-4 py-2 cursor-pointer text-sm font-semibold rounded-t-xl transition duration-200 border-b-2 border-transparent text-gray-400 hover:text-gray-200 peer-checked/wf-builder:text-white peer-checked/wf-builder:bg-indigo-950/60 peer-checked/wf-builder:border-indigo-500">
+                Agent SOUL &amp; Builder
+            </label>
+            <label for="wf-tab-stream" class="inline-block mr-1 px-4 py-2 cursor-pointer text-sm font-semibold rounded-t-xl transition duration-200 border-b-2 border-transparent text-gray-400 hover:text-gray-200 peer-checked/wf-stream:text-white peer-checked/wf-stream:bg-indigo-950/60 peer-checked/wf-stream:border-indigo-500">
+                Live Execution Stream
+            </label>
+            <label for="wf-tab-inspector" class="inline-block px-4 py-2 cursor-pointer text-sm font-semibold rounded-t-xl transition duration-200 border-b-2 border-transparent text-gray-400 hover:text-gray-200 peer-checked/wf-inspector:text-white peer-checked/wf-inspector:bg-indigo-950/60 peer-checked/wf-inspector:border-indigo-500">
+                Stage Inspector &amp; Audit Logs
+            </label>
+        </div>
         <button type="button" onclick="document.getElementById('new-agent-dialog').classList.remove('hidden')"
             class="shrink-0 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl transition duration-200 active:scale-95">
             + New Agent
         </button>
     </div>
 
-    <!-- Feedback Banner (HTMX target, and create-agent errors) -->
+    <!-- Feedback Banner -->
     <div id="feedback" class="transition duration-300">
         {{if .Error}}
         <div class="bg-red-950/40 border border-red-900/60 text-red-200 px-4 py-3 rounded-xl text-sm flex items-center space-x-2">
@@ -26,7 +80,7 @@
     <div id="new-agent-dialog" class="hidden fixed inset-0 z-40 flex items-center justify-center p-4 bg-black/60">
         <div class="w-full max-w-md p-6 rounded-2xl glass border border-indigo-950/40 space-y-4">
             <h3 class="text-lg font-bold text-white">Create a new agent</h3>
-            <p class="text-xs text-gray-400">Starts with provider-aligned defaults (OpenAI LLM, Google TTS, 8-turn memory) &mdash; tune every block below once it's created.</p>
+            <p class="text-xs text-gray-400">Starts with provider-aligned defaults (OpenAI LLM, Google TTS, 8-turn memory) &mdash; tune every block below once created.</p>
             <form action="/dashboard/workflows/create" method="POST" class="space-y-4">
                 <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
                 <div>
@@ -44,6 +98,8 @@
         </div>
     </div>
 
+    <!-- TAB 1 PANEL: Agent Builder -->
+    <div id="wf-panel-builder" class="hidden peer-checked/wf-builder:block space-y-8">
     {{range $agent := .Agents}}
     <!-- Agent Editor -->
     <div class="glass p-8 rounded-2xl border border-indigo-950/40 relative space-y-8">
@@ -292,14 +348,89 @@
                     class="px-6 py-3 bg-gradient-to-r from-indigo-500 to-indigo-700 hover:from-indigo-600 hover:to-indigo-800 text-white font-semibold text-sm rounded-xl transition duration-200 shadow-md shadow-indigo-500/10 active:scale-[0.98]">
                     Save Changes
                 </button>
-            </div>
-        </form>
     </div>
     {{else}}
     <div class="glass p-8 text-center text-gray-400 rounded-2xl border border-indigo-950/40">
         No active agents found in the `agents` table. Create an agent to edit its workflow.
     </div>
     {{end}}
+    </div>
+    <!-- END TAB 1 PANEL -->
+
+    <!-- TAB 2 PANEL: Live Execution Stream -->
+    <div id="wf-panel-stream" class="hidden peer-checked/wf-stream:block space-y-4">
+        <div class="glass p-6 rounded-2xl border border-indigo-950/40 space-y-4">
+            <div class="flex items-center justify-between border-b border-indigo-950/50 pb-3">
+                <div>
+                    <h3 class="font-bold text-white text-base">Live Daemon Telemetry &amp; Log Stream</h3>
+                    <p class="text-xs text-gray-500">Real-time pipeline execution logs streamed via Server-Sent Events (SSE /api/logs).</p>
+                </div>
+                <div class="flex items-center gap-2">
+                    <span class="flex h-2 w-2 relative">
+                        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                        <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                    </span>
+                    <span class="text-xs text-emerald-400 font-bold uppercase tracking-wider">SSE Connected</span>
+                </div>
+            </div>
+            <div id="wf-log-stream" class="h-96 overflow-y-auto bg-slate-950/80 border border-indigo-950/60 rounded-xl p-4 font-mono text-xs text-slate-300 space-y-1" role="log" aria-live="polite">
+                <div class="text-gray-500 italic">Listening for live pipeline events...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- TAB 3 PANEL: Stage Inspector & Audit Logs -->
+    <div id="wf-panel-inspector" class="hidden peer-checked/wf-inspector:block space-y-4">
+        <div class="glass p-6 rounded-2xl border border-indigo-950/40 space-y-4">
+            <div class="flex items-center justify-between border-b border-indigo-950/50 pb-3">
+                <div>
+                    <h3 class="font-bold text-white text-base">Stage Inspector &amp; Activity Telemetry</h3>
+                    <p class="text-xs text-gray-500">Recent pipeline executions with stage-by-stage latency breakdowns (STT, LLM, TTS, Tools).</p>
+                </div>
+                <span class="text-xs text-indigo-400 font-bold font-mono">Last 20 Executions</span>
+            </div>
+
+            <div class="space-y-3">
+                {{range .Activity}}
+                <div class="p-4 bg-slate-950/60 border border-indigo-950/50 rounded-xl space-y-3">
+                    <div class="flex flex-wrap items-center justify-between gap-2 border-b border-indigo-950/40 pb-2">
+                        <div class="flex items-center gap-2">
+                            <span class="text-xs font-bold text-white font-mono">{{.ChatID}}</span>
+                            <span class="text-[10px] bg-slate-900 text-gray-400 border border-slate-800 px-2 py-0.5 rounded font-mono">{{.ID}}</span>
+                        </div>
+                        <div class="flex items-center gap-1.5 flex-wrap text-[10px] font-mono">
+                            {{if .SttMs}}<span class="bg-blue-950 text-blue-300 border border-blue-900 px-2 py-0.5 rounded">STT: {{.SttMs}}ms</span>{{end}}
+                            {{if .LlmMs}}<span class="bg-purple-950 text-purple-300 border border-purple-900 px-2 py-0.5 rounded">LLM: {{.LlmMs}}ms</span>{{end}}
+                            {{if .TtsMs}}<span class="bg-cyan-950 text-cyan-300 border border-cyan-900 px-2 py-0.5 rounded">TTS: {{.TtsMs}}ms</span>{{end}}
+                            <span class="bg-emerald-950 text-emerald-300 border border-emerald-900 px-2 py-0.5 rounded font-bold">Total: {{.TotalMs}}ms</span>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                        <div>
+                            <span class="block text-[10px] font-semibold text-gray-500 uppercase">Input Transcript</span>
+                            <div class="text-slate-300 mt-1 bg-slate-900/40 p-2 rounded border border-indigo-950/30">{{if .Transcript}}{{.Transcript}}{{else}}&mdash;{{end}}</div>
+                        </div>
+                        <div>
+                            <span class="block text-[10px] font-semibold text-gray-500 uppercase">Bot Reply</span>
+                            <div class="text-slate-200 mt-1 bg-indigo-950/20 p-2 rounded border border-indigo-950/30">{{if .Reply}}{{.Reply}}{{else}}&mdash;{{end}}</div>
+                        </div>
+                    </div>
+
+                    {{if .ToolCalls}}
+                    <div class="pt-1">
+                        <span class="block text-[10px] font-semibold text-gray-500 uppercase mb-1">Tool Executions Payload</span>
+                        <pre class="text-[10px] text-indigo-300 bg-slate-950 p-2 rounded border border-indigo-950/60 overflow-x-auto font-mono">{{printf "%s" .ToolCalls}}</pre>
+                    </div>
+                    {{end}}
+                </div>
+                {{else}}
+                <div class="text-center text-gray-500 text-xs py-8">No pipeline executions logged yet. Process a message on WhatsApp to view stage telemetry.</div>
+                {{end}}
+            </div>
+        </div>
+    </div>
+    <!-- END TAB 3 PANEL -->
 
 </div>
 <script src="/static/workflow.js" defer></script>

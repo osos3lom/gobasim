@@ -1,76 +1,239 @@
 {{template "layout" .}}
 
 {{define "logs-content"}}
-<div class="space-y-6 flex flex-col h-[calc(100vh-140px)]">
+<div class="space-y-4 flex flex-col h-[calc(100vh-140px)]">
 
-    <!-- Terminal Header Info -->
-    <div class="flex items-center justify-between shrink-0">
+    <!-- Terminal Header & Controls -->
+    <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shrink-0">
         <div>
-            <h3 class="text-lg font-bold text-white">Live Event Logger</h3>
-            <p class="text-sm text-gray-400">Piping unified Go server logs directly to your session.</p>
+            <h3 class="text-lg font-bold text-white">Unified Telemetry Terminal</h3>
+            <p class="text-xs text-gray-500">Live daemon log stream via Server-Sent Events (SSE <span class="font-mono text-indigo-400">/api/logs</span>).</p>
         </div>
-        <button id="clear-btn" class="px-4 py-2 bg-indigo-950 hover:bg-indigo-900 border border-indigo-800 text-indigo-300 font-semibold text-xs rounded-xl transition duration-200">
-            Clear Window
+        <div class="flex items-center gap-2">
+            <span id="sse-indicator" class="flex items-center gap-1.5">
+                <span class="flex h-2 w-2 relative">
+                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                </span>
+                <span class="text-[10px] text-emerald-400 font-bold uppercase tracking-wider">SSE Connected</span>
+            </span>
+        </div>
+    </div>
+
+    <!-- Filter & Search Controls Bar -->
+    <div class="flex flex-wrap items-center gap-2 shrink-0">
+        <!-- Severity Filter Pills -->
+        <div class="flex items-center gap-1" id="log-filters">
+            <button type="button" data-filter="all" class="log-filter-btn active px-3 py-1 text-[10px] font-bold rounded-lg border transition duration-200 bg-indigo-950 text-indigo-300 border-indigo-800">ALL</button>
+            <button type="button" data-filter="error" class="log-filter-btn px-3 py-1 text-[10px] font-bold rounded-lg border transition duration-200 bg-slate-950/60 text-red-400 border-red-900/60 hover:bg-red-950/40">ERROR</button>
+            <button type="button" data-filter="warn" class="log-filter-btn px-3 py-1 text-[10px] font-bold rounded-lg border transition duration-200 bg-slate-950/60 text-amber-400 border-amber-900/60 hover:bg-amber-950/40">WARN</button>
+            <button type="button" data-filter="llm" class="log-filter-btn px-3 py-1 text-[10px] font-bold rounded-lg border transition duration-200 bg-slate-950/60 text-purple-400 border-purple-900/60 hover:bg-purple-950/40">LLM</button>
+            <button type="button" data-filter="erp" class="log-filter-btn px-3 py-1 text-[10px] font-bold rounded-lg border transition duration-200 bg-slate-950/60 text-emerald-400 border-emerald-900/60 hover:bg-emerald-950/40">ERP</button>
+            <button type="button" data-filter="wa" class="log-filter-btn px-3 py-1 text-[10px] font-bold rounded-lg border transition duration-200 bg-slate-950/60 text-indigo-400 border-indigo-900/60 hover:bg-indigo-950/40">WA</button>
+        </div>
+
+        <!-- Spacer -->
+        <div class="flex-1"></div>
+
+        <!-- Search Input -->
+        <div class="relative">
+            <input type="text" id="log-search" placeholder="Search trace ID, phone, tool..."
+                class="w-48 bg-[#03060c]/80 border border-indigo-950/80 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-lg px-3 py-1.5 text-[11px] text-slate-300 outline-none transition duration-200 font-mono placeholder:text-gray-600">
+        </div>
+
+        <!-- Auto-Scroll Toggle -->
+        <button type="button" id="autoscroll-btn"
+            class="px-3 py-1.5 text-[10px] font-bold rounded-lg border transition duration-200 bg-emerald-950/60 text-emerald-300 border-emerald-900/60">
+            Auto-Scroll: ON
+        </button>
+
+        <!-- Clear Window -->
+        <button id="clear-btn" class="px-3 py-1.5 text-[10px] font-bold rounded-lg border transition duration-200 bg-slate-950/60 text-gray-400 border-indigo-950/60 hover:bg-indigo-950/40 hover:text-gray-200">
+            Clear
+        </button>
+
+        <!-- Export Logs -->
+        <button id="export-btn" class="px-3 py-1.5 text-[10px] font-bold rounded-lg border transition duration-200 bg-indigo-950/60 text-indigo-300 border-indigo-800 hover:bg-indigo-900/60">
+            Export 📥
         </button>
     </div>
 
     <!-- Terminal Window -->
-    <div class="flex-1 bg-[#03060c] border border-indigo-950/60 rounded-2xl p-6 font-mono text-sm overflow-hidden flex flex-col shadow-2xl relative">
+    <div class="flex-1 bg-[#03060c] border border-indigo-950/60 rounded-2xl p-4 font-mono text-xs overflow-hidden flex flex-col shadow-2xl relative">
         <!-- Dot Accents -->
-        <div class="absolute top-4 left-4 flex space-x-2 shrink-0">
-            <span class="w-3 h-3 rounded-full bg-red-500/80"></span>
-            <span class="w-3 h-3 rounded-full bg-yellow-500/80"></span>
-            <span class="w-3 h-3 rounded-full bg-emerald-500/80"></span>
+        <div class="absolute top-3 left-4 flex space-x-2 shrink-0">
+            <span class="w-2.5 h-2.5 rounded-full bg-red-500/80"></span>
+            <span class="w-2.5 h-2.5 rounded-full bg-yellow-500/80"></span>
+            <span class="w-2.5 h-2.5 rounded-full bg-emerald-500/80"></span>
         </div>
 
-        <div class="absolute top-3 right-6 text-xs text-indigo-500 shrink-0 select-none">
-            log_streamer.go
+        <div class="absolute top-2.5 right-4 text-[10px] text-indigo-600 shrink-0 select-none font-mono">
+            sawt_daemon_telemetry
         </div>
 
         <!-- Terminal Body -->
-        <div id="log-window" class="mt-6 flex-1 overflow-y-auto space-y-2 text-indigo-200 select-text pr-2 scrollbar">
-            <div class="text-gray-500 select-none">// Sawt Unified Daemon live event logging established. Waiting for packets...</div>
+        <div id="log-window" class="mt-5 flex-1 overflow-y-auto space-y-0.5 text-indigo-200 select-text pr-2 scrollbar">
+            <div class="text-gray-600 select-none text-[11px]">// Sawt Unified Daemon live event logging established. Waiting for packets...</div>
         </div>
     </div>
 
 </div>
 
-<!-- JavaScript to stream logs via SSE -->
+<!-- JavaScript: SSE Stream + Filters + Search + Auto-Scroll + Export -->
 <script>
+(function() {
     const logWindow = document.getElementById('log-window');
     const clearBtn = document.getElementById('clear-btn');
-    
-    // Connect to Server-Sent Events endpoint
-    const eventSource = new EventSource('/api/logs');
+    const exportBtn = document.getElementById('export-btn');
+    const autoscrollBtn = document.getElementById('autoscroll-btn');
+    const searchInput = document.getElementById('log-search');
+    const filterBtns = document.querySelectorAll('.log-filter-btn');
+    const sseIndicator = document.getElementById('sse-indicator');
+    const MAX_LINES = 300;
 
+    let autoScroll = true;
+    let activeFilter = 'all';
+    let searchTerm = '';
+    let rawLines = [];
+
+    // Severity classification
+    function classifyLine(text) {
+        const upper = text.toUpperCase();
+        if (upper.includes('ERROR') || upper.includes('PANIC') || upper.includes('FATAL')) return 'error';
+        if (upper.includes('WARN')) return 'warn';
+        if (upper.includes('LLM') || upper.includes('NIM') || upper.includes('OPENAI') || upper.includes('GROQ') || upper.includes('COMPLETION')) return 'llm';
+        if (upper.includes('ERP') || upper.includes('TOOL') || upper.includes('MSHALIA')) return 'erp';
+        if (upper.includes('WHATSAPP') || upper.includes('WHATSMEOW') || upper.includes('WA ') || upper.includes('[WA]')) return 'wa';
+        return 'info';
+    }
+
+    // Severity color classes
+    function severityClasses(sev) {
+        switch (sev) {
+            case 'error': return 'text-red-400 bg-red-950/20';
+            case 'warn':  return 'text-amber-400';
+            case 'llm':   return 'text-purple-400';
+            case 'erp':   return 'text-emerald-400';
+            case 'wa':    return 'text-indigo-400';
+            default:      return 'text-slate-400';
+        }
+    }
+
+    function shouldShow(line) {
+        if (activeFilter !== 'all' && line.sev !== activeFilter) return false;
+        if (searchTerm && !line.text.toLowerCase().includes(searchTerm)) return false;
+        return true;
+    }
+
+    function renderLines() {
+        logWindow.innerHTML = '';
+        rawLines.forEach(function(line) {
+            if (!shouldShow(line)) return;
+            var el = document.createElement('div');
+            el.className = 'py-0.5 border-b border-indigo-950/15 leading-relaxed text-[11px] ' + severityClasses(line.sev);
+            var arrow = document.createElement('span');
+            arrow.className = 'text-indigo-600 select-none mr-1';
+            arrow.textContent = '>';
+            var text = document.createElement('span');
+            text.textContent = line.text;
+            el.appendChild(arrow);
+            el.appendChild(text);
+            logWindow.appendChild(el);
+        });
+        if (autoScroll) logWindow.scrollTop = logWindow.scrollHeight;
+    }
+
+    function addLine(text) {
+        var sev = classifyLine(text);
+        rawLines.push({ text: text, sev: sev });
+        if (rawLines.length > MAX_LINES) rawLines.shift();
+
+        if (!shouldShow({ text: text, sev: sev })) return;
+
+        var el = document.createElement('div');
+        el.className = 'py-0.5 border-b border-indigo-950/15 leading-relaxed text-[11px] ' + severityClasses(sev);
+        var arrow = document.createElement('span');
+        arrow.className = 'text-indigo-600 select-none mr-1';
+        arrow.textContent = '>';
+        var textNode = document.createElement('span');
+        textNode.textContent = text;
+        el.appendChild(arrow);
+        el.appendChild(textNode);
+        logWindow.appendChild(el);
+
+        while (logWindow.children.length > MAX_LINES) {
+            logWindow.removeChild(logWindow.firstChild);
+        }
+        if (autoScroll) logWindow.scrollTop = logWindow.scrollHeight;
+    }
+
+    // SSE Connection
+    var eventSource = new EventSource('/api/logs');
     eventSource.onmessage = function(event) {
-        const line = document.createElement('div');
-        line.className = 'py-0.5 border-b border-indigo-950/20 last:border-0 leading-relaxed';
-        const arrow = document.createElement('span');
-        arrow.className = 'text-indigo-400 select-none';
-        arrow.textContent = '> ';
-        const text = document.createElement('span');
-        text.className = 'text-slate-300';
-        text.textContent = event.data;
-        line.appendChild(arrow);
-        line.appendChild(text);
-        logWindow.appendChild(line);
-        
-        // Auto scroll to bottom
-        logWindow.scrollTop = logWindow.scrollHeight;
+        if (event.data) addLine(event.data);
+    };
+    eventSource.onerror = function() {
+        sseIndicator.innerHTML = '<span class="h-2 w-2 rounded-full bg-red-400"></span><span class="text-[10px] text-red-400 font-bold uppercase tracking-wider">SSE Disconnected</span>';
+        addLine('[!] SSE connection lost. Browser will auto-reconnect...');
+    };
+    eventSource.onopen = function() {
+        sseIndicator.innerHTML = '<span class="flex h-2 w-2 relative"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span><span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span></span><span class="text-[10px] text-emerald-400 font-bold uppercase tracking-wider">SSE Connected</span>';
     };
 
-    eventSource.onerror = function(err) {
-        console.error("SSE connection error: ", err);
-        const line = document.createElement('div');
-        line.className = 'text-red-400 font-semibold py-1';
-        line.innerHTML = `[!] SSE Log connection lost. Reconnecting...`;
-        logWindow.appendChild(line);
-        logWindow.scrollTop = logWindow.scrollHeight;
-    };
-
-    clearBtn.addEventListener('click', () => {
-        logWindow.innerHTML = '<div class="text-gray-500 select-none">// Terminal cleared. Listening...</div>';
+    // Filter Pills
+    filterBtns.forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            filterBtns.forEach(function(b) {
+                b.classList.remove('active', 'bg-indigo-950');
+                b.classList.add('bg-slate-950/60');
+            });
+            btn.classList.add('active', 'bg-indigo-950');
+            btn.classList.remove('bg-slate-950/60');
+            activeFilter = btn.getAttribute('data-filter');
+            renderLines();
+        });
     });
+
+    // Search
+    searchInput.addEventListener('input', function() {
+        searchTerm = searchInput.value.toLowerCase();
+        renderLines();
+    });
+
+    // Auto-Scroll Toggle
+    autoscrollBtn.addEventListener('click', function() {
+        autoScroll = !autoScroll;
+        if (autoScroll) {
+            autoscrollBtn.textContent = 'Auto-Scroll: ON';
+            autoscrollBtn.classList.remove('bg-slate-950/60', 'text-gray-400', 'border-indigo-950/60');
+            autoscrollBtn.classList.add('bg-emerald-950/60', 'text-emerald-300', 'border-emerald-900/60');
+            logWindow.scrollTop = logWindow.scrollHeight;
+        } else {
+            autoscrollBtn.textContent = 'Auto-Scroll: OFF';
+            autoscrollBtn.classList.remove('bg-emerald-950/60', 'text-emerald-300', 'border-emerald-900/60');
+            autoscrollBtn.classList.add('bg-slate-950/60', 'text-gray-400', 'border-indigo-950/60');
+        }
+    });
+
+    // Clear Window
+    clearBtn.addEventListener('click', function() {
+        rawLines = [];
+        logWindow.innerHTML = '<div class="text-gray-600 select-none text-[11px]">// Terminal cleared. Listening...</div>';
+    });
+
+    // Export Logs
+    exportBtn.addEventListener('click', function() {
+        var content = rawLines.map(function(l) { return l.text; }).join('\n');
+        var blob = new Blob([content], { type: 'text/plain' });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = 'sawt_logs_' + new Date().toISOString().replace(/[:.]/g, '-') + '.log';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    });
+})();
 </script>
 {{end}}

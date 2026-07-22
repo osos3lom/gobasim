@@ -150,9 +150,31 @@
 
   document.addEventListener("DOMContentLoaded", function () {
     initAll(document);
+    initSSEStream();
   });
   // Re-init any editors that arrive via HTMX fragment swaps.
   document.body.addEventListener("htmx:afterSwap", function (e) {
     initAll(e.target);
   });
+
+  function initSSEStream() {
+    var streamContainer = document.getElementById("wf-log-stream");
+    if (!streamContainer) return;
+    try {
+      var evtSource = new EventSource("/api/logs");
+      evtSource.onmessage = function (e) {
+        if (!e.data) return;
+        var line = document.createElement("div");
+        line.className = "py-0.5 border-b border-indigo-950/20 hover:bg-slate-900/60 text-slate-300";
+        line.textContent = e.data;
+        streamContainer.appendChild(line);
+        if (streamContainer.children.length > 200) {
+          streamContainer.removeChild(streamContainer.firstChild);
+        }
+        streamContainer.scrollTop = streamContainer.scrollHeight;
+      };
+    } catch (err) {
+      console.warn("SSE connection to /api/logs unavailable", err);
+    }
+  }
 })();

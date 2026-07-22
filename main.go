@@ -350,17 +350,37 @@ func runRetention(ctx context.Context, queries *database.Queries, days int) {
 }
 
 func seedAdminUser(ctx context.Context, pool *pgxpool.Pool, queries *database.Queries, cfg *config.Config) error {
+	username := cfg.AdminUsername
+	if username == "" {
+		username = "admin"
+	}
+
+	// If ADMIN_PASSWORD is set explicitly in environment config, update or insert
+	// the configured username with the new password hash.
+	if cfg.AdminPassword != "" {
+		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(cfg.AdminPassword), bcrypt.DefaultCost)
+		if err != nil {
+			return fmt.Errorf("failed to hash admin password: %w", err)
+		}
+		_, err = pool.Exec(ctx, `
+			INSERT INTO users (username, password_hash)
+			VALUES ($1, $2)
+			ON CONFLICT (username)
+			DO UPDATE SET password_hash = EXCLUDED.password_hash
+		`, username, string(hashedPassword))
+		if err != nil {
+			return fmt.Errorf("failed to upsert admin user: %w", err)
+		}
+		log.Printf("Database: Admin user '%s' synced from environment configuration.", username)
+		return nil
+	}
+
 	var userCount int64
 	if err := pool.QueryRow(ctx, "SELECT COUNT(*) FROM users").Scan(&userCount); err != nil {
 		return fmt.Errorf("failed to count users: %w", err)
 	}
 	if userCount > 0 {
 		return nil
-	}
-
-	username := cfg.AdminUsername
-	if username == "" {
-		username = "admin"
 	}
 
 	password := cfg.AdminPassword
@@ -393,7 +413,7 @@ func seedAdminUser(ctx context.Context, pool *pgxpool.Pool, queries *database.Qu
 		fmt.Fprintf(os.Stderr, "\nDatabase: Seeded admin user %q with a generated one-time password: %s\n", username, password)
 		fmt.Fprintln(os.Stderr, "Database: ^^ This password will NOT be shown again. Log in and change it, or set ADMIN_USERNAME/ADMIN_PASSWORD.")
 	} else {
-		log.Printf("Database: Seeded admin user %q from ADMIN_USERNAME/ADMIN_PASSWORD.", username)
+		log.Printf("Database: Seeded admin user %q from ADMIN_USERNAME/ADMIN_PASSWORD env vars.", username)
 	}
 	return nil
 }
@@ -487,13 +507,9 @@ func handleIncomingMessage(
 		return
 	}
 
-	// Look up contact in wa_contacts to verify if they are enabled
+	// Look up contact in wa_contacts to verify if they exist
 	contact, err := queries.GetWaContact(ctx, evt.Info.Chat.String())
 	if err != nil {
-		// Contact does not exist yet. Auto-create it DISABLED so it shows up
-		// in the dashboard, then drop the message: the agent must never talk
-		// to a new person until an operator explicitly enables the chat
-		// (explicit opt-in; matches wa_contacts.enabled DEFAULT FALSE).
 		var bp web.BlueprintDefaults
 		if settings, sErr := queries.GetSettings(ctx); sErr == nil && len(settings.BotConfig) > 0 {
 			_ = json.Unmarshal(settings.BotConfig, &bp)
@@ -503,22 +519,10 @@ func handleIncomingMessage(
 			trace.Logf(ctx, "Inbound: Warning: Failed to auto-create contact %s: %v", evt.Info.Chat.String(), err)
 			return
 		}
-		if !contact.Enabled {
-			trace.Logf(ctx, "Inbound: Auto-created contact %s (%s) as disabled; awaiting operator opt-in", contact.Name, contact.ChatID)
-			return
-		}
-		trace.Logf(ctx, "Inbound: Auto-created contact %s (%s) as enabled via blueprint override", contact.Name, contact.ChatID)
-	}
-	if !contact.Enabled {
-		// Drop message processing if contact is disabled
-		trace.Logf(ctx, "Inbound: Discarding message from disabled contact %s (%s)", contact.Name, contact.ChatID)
-		return
 	}
 
+	// Extract text content upfront to check for confirmation replies
 	var text string
-	var incomingAudio []byte
-
-	// Extract text content
 	if evt.Message.Conversation != nil {
 		text = *evt.Message.Conversation
 	} else if evt.Message.ExtendedTextMessage != nil && evt.Message.ExtendedTextMessage.Text != nil {
@@ -529,6 +533,50 @@ func handleIncomingMessage(
 		text = *evt.Message.VideoMessage.Caption
 	}
 
+	// Cascading ERP Identity Resolution check
+	var identity *erp.Identity
+	linkResult, lErr := erp.ResolveAndPersistContactIdentity(ctx, erpClient, queries, evt.Info.Chat.String(), contact.ErpPhoneOverride)
+	if lErr != nil {
+		trace.Logf(ctx, "Inbound: Identity resolution warning for %s: %v", evt.Info.Chat.String(), lErr)
+	} else if linkResult != nil {
+		identity = linkResult.Identity
+	}
+
+	// Interactive Chat Confirmation Flow for unconfirmed/disabled contacts
+	if !contact.Enabled {
+		trimmedLower := strings.ToLower(strings.TrimSpace(text))
+		isAffirmative := trimmedLower == "نعم" || trimmedLower == "yes" || trimmedLower == "تأكيد" || trimmedLower == "confirm" || trimmedLower == "1"
+
+		if identity != nil {
+			if isAffirmative {
+				// User confirmed! Enable contact and link identity atomically.
+				updated, uErr := queries.CreateOrUpdateWaContact(ctx, database.CreateOrUpdateWaContactParams{
+					ChatID:         contact.ChatID,
+					Name:           identity.DisplayName,
+					Enabled:        true,
+					AgentID:        contact.AgentID,
+					PromptOverride: contact.PromptOverride,
+				})
+				if uErr == nil {
+					contact = updated
+					sendTextReply(ctx, client, evt.Info.Chat, fmt.Sprintf("تم ربط حسابك بنجاح بصفة (%s)! أهلاً بك في مساعد صوت، كيف يمكنني مساعدتك اليوم؟", identity.Role))
+					trace.Logf(ctx, "Inbound: Contact %s confirmed identity link as %s (%s)", contact.ChatID, identity.DisplayName, identity.Role)
+				}
+			} else {
+				// Send confirmation prompt to the user in WhatsApp chat
+				promptMsg := fmt.Sprintf("مرحباً %s! عثرنا على حسابك في النظام بصفتك (%s). هل ترغب في ربط هذا الرقم بحسابك والتواصل مع مساعد صوت؟ أجب بـ 'نعم' للتأكيد.", identity.DisplayName, identity.Role)
+				sendTextReply(ctx, client, evt.Info.Chat, promptMsg)
+				trace.Logf(ctx, "Inbound: Sent identity confirmation prompt to %s for ERP user %s", contact.ChatID, identity.DisplayName)
+				return
+			}
+		} else {
+			// No ERP match found for this number/LID
+			sendTextReply(ctx, client, evt.Info.Chat, "أهلاً بك! رقمك غير مسجل في نظام مشالية بعد. يرجى تزويد المسؤول برقم جوالك أو تحديث بياناتك في النظام لربط الحساب.")
+			trace.Logf(ctx, "Inbound: Discarding message from unlinked contact %s (%s)", contact.Name, contact.ChatID)
+			return
+		}
+	}
+	var incomingAudio []byte
 	isAudio := evt.Message.AudioMessage != nil
 	var sttProvider, ttsProvider string
 	var sttMs, llmMs, ttsMs int32
@@ -667,19 +715,7 @@ func handleIncomingMessage(
 		Status:    "delivered",
 	})
 
-	// 2. Resolve Actor Identity from Phone JID (or the operator-set
-	// erp_phone_override, when the WhatsApp number doesn't match what's
-	// registered in the ERP), persisting the outcome onto wa_contacts.
-	var identity *erp.Identity
-	linkResult, err := erp.ResolveAndPersistContactIdentity(ctx, erpClient, queries, evt.Info.Chat.String(), contact.ErpPhoneOverride)
-	if err != nil {
-		monitor.ReportError(ctx, "identity", err)
-	} else {
-		identity = linkResult.Identity
-	}
-	// Give a resolved-but-orgless privileged actor (super_admin/admin/owner) a
-	// working org so the ERP tool loop doesn't bail as "unlinked". Closes the
-	// M9 gap where super-admin phones resolved with empty OrgIDs (D-6a).
+	// 2. Apply Default Org for privileged orgless actors (super_admin/admin/owner)
 	if erp.ApplyDefaultOrg(identity, cfg.DefaultOrgID) {
 		trace.Logf(ctx, "Inbound: applied DEFAULT_ORG_ID=%q for privileged orgless actor %s", cfg.DefaultOrgID, identity.UID)
 	}

@@ -349,5 +349,16 @@ DELETE FROM processed_messages WHERE processed_at < $1;
 INSERT INTO tool_executions (chat_id, tool_id, args, result, status)
 VALUES ($1, $2, $3, $4, $5);
 
+-- name: ListToolExecutionsByChat :many
+SELECT * FROM tool_executions
+WHERE chat_id = $1
+ORDER BY ts DESC
+LIMIT $2;
+
 -- name: PurgeToolExecutionsBefore :exec
 DELETE FROM tool_executions WHERE ts < $1;
+
+-- name: ListPendingConfirmations :many
+SELECT * FROM pending_confirmations
+WHERE status = 'pending'
+ORDER BY created_at DESC;

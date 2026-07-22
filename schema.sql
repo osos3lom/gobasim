@@ -150,6 +150,14 @@ CREATE TABLE IF NOT EXISTS wa_contacts (
     erp_resolved_at TIMESTAMPTZ,
     erp_phone_override TEXT
 );
+-- Idempotent migration for deployments created before erp_* columns existed on wa_contacts
+ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS erp_uid TEXT;
+ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS erp_display_name TEXT;
+ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS erp_org_id TEXT;
+ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS erp_role TEXT;
+ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS erp_unresolved_reason TEXT;
+ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS erp_resolved_at TIMESTAMPTZ;
+ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS erp_phone_override TEXT;
 
 CREATE TABLE IF NOT EXISTS wa_activity (
     id TEXT PRIMARY KEY,

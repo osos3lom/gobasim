@@ -295,6 +295,46 @@ func (q *Queries) CreateToolExecution(ctx context.Context, arg CreateToolExecuti
 	return err
 }
 
+const listToolExecutionsByChat = `-- name: ListToolExecutionsByChat :many
+SELECT id, chat_id, tool_id, args, result, status, ts FROM tool_executions
+WHERE chat_id = $1
+ORDER BY ts DESC
+LIMIT $2
+`
+
+type ListToolExecutionsByChatParams struct {
+	ChatID string `json:"chat_id"`
+	Limit  int32  `json:"limit"`
+}
+
+func (q *Queries) ListToolExecutionsByChat(ctx context.Context, arg ListToolExecutionsByChatParams) ([]ToolExecution, error) {
+	rows, err := q.db.Query(ctx, listToolExecutionsByChat, arg.ChatID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ToolExecution
+	for rows.Next() {
+		var i ToolExecution
+		if err := rows.Scan(
+			&i.ID,
+			&i.ChatID,
+			&i.ToolID,
+			&i.Args,
+			&i.Result,
+			&i.Status,
+			&i.Ts,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const createTtsHistory = `-- name: CreateTtsHistory :exec
 INSERT INTO tts_history (id, ts, text, model, speed, duration_ms, size_bytes)
 VALUES ($1, NOW(), $2, $3, $4, $5, $6)
@@ -541,6 +581,46 @@ func (q *Queries) GetPendingConfirmation(ctx context.Context, chatID string) (Pe
 		&i.Intent,
 	)
 	return i, err
+}
+
+const listPendingConfirmations = `-- name: ListPendingConfirmations :many
+SELECT chat_id, tool_id, args, org_id, acting_user_uid, description, status, claimed_at, created_at, expires_at, missing_fields, collect_rounds, intent FROM pending_confirmations
+WHERE status = 'pending'
+ORDER BY created_at DESC
+`
+
+func (q *Queries) ListPendingConfirmations(ctx context.Context) ([]PendingConfirmation, error) {
+	rows, err := q.db.Query(ctx, listPendingConfirmations)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PendingConfirmation
+	for rows.Next() {
+		var i PendingConfirmation
+		if err := rows.Scan(
+			&i.ChatID,
+			&i.ToolID,
+			&i.Args,
+			&i.OrgID,
+			&i.ActingUserUid,
+			&i.Description,
+			&i.Status,
+			&i.ClaimedAt,
+			&i.CreatedAt,
+			&i.ExpiresAt,
+			&i.MissingFields,
+			&i.CollectRounds,
+			&i.Intent,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getSettings = `-- name: GetSettings :one

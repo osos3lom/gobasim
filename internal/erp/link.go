@@ -11,6 +11,7 @@ import (
 const (
 	UnresolvedNoMatch         = "no_match"
 	UnresolvedPhoneUnverified = "phone_unverified"
+	UnresolvedLidUnlinked     = "lid_unlinked"
 )
 
 // LinkResult is the outcome of resolving a WhatsApp contact's ERP identity.
@@ -32,6 +33,7 @@ type LinkResult struct {
 // caller via the returned error, leaving any previously known-good link on
 // the contact row untouched rather than flapping it to "unresolved".
 func ResolveAndPersistContactIdentity(ctx context.Context, client *Client, queries *database.Queries, chatID string, phoneOverride *string) (*LinkResult, error) {
+	isLID := strings.HasSuffix(strings.ToLower(chatID), "@lid")
 	phone := strings.Split(chatID, "@")[0]
 	if phoneOverride != nil && strings.TrimSpace(*phoneOverride) != "" {
 		phone = strings.TrimSpace(*phoneOverride)
@@ -47,8 +49,11 @@ func ResolveAndPersistContactIdentity(ctx context.Context, client *Client, queri
 
 	switch {
 	case identity == nil:
-		result.Reason = UnresolvedNoMatch
 		reason := UnresolvedNoMatch
+		if isLID && (phoneOverride == nil || strings.TrimSpace(*phoneOverride) == "") {
+			reason = UnresolvedLidUnlinked
+		}
+		result.Reason = reason
 		params.ErpUnresolvedReason = &reason
 	case identity.PhoneUnverified:
 		result.Reason = UnresolvedPhoneUnverified

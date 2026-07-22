@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 )
 
 type Config struct {
@@ -169,4 +170,13 @@ func GetEnvInt(key string, defaultVal int) int {
 		return defaultVal
 	}
 	return val
+}
+
+// CanonicalErpURL returns MshaliaAPIURL trimmed of trailing slashes,
+// falling back to http://mshalia.vercel.app if empty.
+func (c *Config) CanonicalErpURL() string {
+	if c == nil || c.MshaliaAPIURL == "" {
+		return "http://mshalia.vercel.app"
+	}
+	return strings.TrimRight(c.MshaliaAPIURL, "/")
 }

@@ -29,19 +29,19 @@ func TestPageTemplatesRenderDistinctContent(t *testing.T) {
 				"Page": "dashboard", "WAStatus": "disconnected",
 			},
 			want:    "Recent Chat Transactions",
-			notWant: []string{"Live Event Logger", "Create a new agent", "WhatsApp Linking"},
+			notWant: []string{"Unified Telemetry Terminal", "Create a new agent", "WhatsApp Linking"},
 		},
 		{
 			file:    "logs.html",
 			data:    map[string]interface{}{"Page": "logs"},
-			want:    "Live Event Logger",
+			want:    "Unified Telemetry Terminal",
 			notWant: []string{"Recent Chat Transactions", "Create a new agent", "WhatsApp Linking"},
 		},
 		{
 			file:    "workflow.html",
 			data:    map[string]interface{}{"Page": "workflows"},
 			want:    "Create a new agent",
-			notWant: []string{"Recent Chat Transactions", "Live Event Logger", "WhatsApp Linking"},
+			notWant: []string{"Recent Chat Transactions", "Unified Telemetry Terminal", "WhatsApp Linking"},
 		},
 		{
 			file: "whatsapp.html",
@@ -49,7 +49,7 @@ func TestPageTemplatesRenderDistinctContent(t *testing.T) {
 				"Page": "whatsapp", "WAStatus": "disconnected",
 			},
 			want:    "WhatsApp Linking",
-			notWant: []string{"Recent Chat Transactions", "Live Event Logger", "Create a new agent"},
+			notWant: []string{"Recent Chat Transactions", "Unified Telemetry Terminal", "Create a new agent"},
 		},
 	}
 

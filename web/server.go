@@ -214,6 +214,11 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 
 // renderTemplate executes templates and checks/logs execution errors
 func (s *Server) renderTemplate(w http.ResponseWriter, name string, data interface{}) {
+	if m, ok := data.(map[string]interface{}); ok {
+		if _, exists := m["ErpURL"]; !exists && s.cfg != nil {
+			m["ErpURL"] = s.cfg.CanonicalErpURL()
+		}
+	}
 	err := s.tmpl.ExecuteTemplate(w, name, data)
 	if err != nil {
 		log.Printf("Template execution error: %v", err)
@@ -292,6 +297,8 @@ func (s *Server) GetRouter() chi.Router {
 		r.With(s.requireCSRF).Post("/dashboard/whatsapp/contacts/{chatID}/agent", s.handlePostAssignWaContactAgent)
 		r.With(s.requireCSRF).Post("/dashboard/whatsapp/contacts/{chatID}/erp-override", s.handlePostSetWaContactErpOverride)
 		r.With(s.requireCSRF).Post("/dashboard/whatsapp/contacts/{chatID}/resolve-identity", s.handlePostResolveWaContactIdentity)
+		r.With(s.requireCSRF).Post("/dashboard/whatsapp/contacts/{chatID}/send-link-invite", s.handlePostSendWaLinkInvite)
+		r.Get("/dashboard/whatsapp/contacts/{chatID}/tools", s.handleGetWaContactTools)
 		r.With(s.requireCSRF).Post("/dashboard/whatsapp/settings", s.handlePostWhatsAppSettings)
 		r.Get("/dashboard/whatsapp/chats", s.handleGetWaChatsFragment)
 		r.Get("/dashboard/whatsapp/chats/{chatID}/messages", s.handleGetWaMessagesFragment)
@@ -440,21 +447,72 @@ func qrDataURL(qrString string) template.URL {
 }
 
 func (s *Server) handleGetDashboard(w http.ResponseWriter, r *http.Request) {
-	// Fetch recent activities
 	activities, err := s.queries.ListRecentWaActivity(r.Context(), 10)
 	if err != nil {
 		activities = []database.WaActivity{}
 	}
 
+	pending, err := s.queries.ListPendingConfirmations(r.Context())
+	if err != nil {
+		pending = []database.PendingConfirmation{}
+	}
+
 	status, _, _ := s.waMgr.GetStatus()
+	uptime, showDisconnectAlert, disconnectedFor := s.waConnectionData()
 
 	s.renderTemplate(w, "dashboard.html", map[string]interface{}{
-		"Username":   r.Context().Value(UsernameContextKey),
-		"Activities": activities,
-		"Page":       "dashboard",
-		"WAStatus":   string(status),
-		"CSRFToken":  s.ensureCSRFToken(w, r),
+		"Username":            r.Context().Value(UsernameContextKey),
+		"Activities":          activities,
+		"PendingApprovals":    pending,
+		"Metrics":             s.waMetricsData(r.Context()),
+		"Page":                "dashboard",
+		"WAStatus":            string(status),
+		"Uptime":              uptime,
+		"ShowDisconnectAlert": showDisconnectAlert,
+		"DisconnectedFor":     disconnectedFor,
+		"CSRFToken":           s.ensureCSRFToken(w, r),
 	})
+}
+
+type WAMetrics struct {
+	TotalContacts  int
+	AiActiveCount  int
+	ErpLinkedCount int
+	ErpLinkRatio   int
+	SlaActiveCount int
+	TotalMessages  int
+}
+
+func (s *Server) waMetricsData(ctx context.Context) WAMetrics {
+	contacts, err := s.queries.ListWaContacts(ctx)
+	if err != nil {
+		contacts = []database.WaContact{}
+	}
+	m := WAMetrics{
+		TotalContacts: len(contacts),
+	}
+	for _, c := range contacts {
+		if c.Enabled {
+			m.AiActiveCount++
+		}
+		if c.ErpUid != nil && *c.ErpUid != "" {
+			m.ErpLinkedCount++
+		}
+	}
+	if m.TotalContacts > 0 {
+		m.ErpLinkRatio = (m.ErpLinkedCount * 100) / m.TotalContacts
+	}
+	chats, err := s.queries.ListWaChatsSummary(ctx)
+	if err == nil {
+		m.TotalMessages = len(chats)
+		now := time.Now()
+		for _, ch := range chats {
+			if now.Sub(ch.LastMessageAt) < 24*time.Hour {
+				m.SlaActiveCount++
+			}
+		}
+	}
+	return m
 }
 
 // renderWhatsAppCard renders the whatsapp_card partial (or the full page,
@@ -473,6 +531,7 @@ func (s *Server) renderWhatsAppCard(w http.ResponseWriter, r *http.Request, over
 		"Uptime":              uptime,
 		"ShowDisconnectAlert": showDisconnectAlert,
 		"DisconnectedFor":     disconnectedFor,
+		"Metrics":             s.waMetricsData(r.Context()),
 		"Partial":             true,
 		"CSRFToken":           s.ensureCSRFToken(w, r),
 	}
@@ -557,6 +616,8 @@ func erpUnresolvedLabel(reason *string) string {
 	switch *reason {
 	case erp.UnresolvedPhoneUnverified:
 		return "phone unverified"
+	case erp.UnresolvedLidUnlinked:
+		return "LID — Set Phone Override"
 	case erp.UnresolvedNoMatch:
 		return "no ERP match"
 	default:
@@ -818,6 +879,57 @@ func (s *Server) handlePostResolveWaContactIdentity(w http.ResponseWriter, r *ht
 	}
 
 	s.renderWaContactAfterErpAction(w, r, refreshed)
+}
+
+// handlePostSendWaLinkInvite sends an interactive identity confirmation prompt
+// directly to the contact's WhatsApp chat from the operator dashboard.
+func (s *Server) handlePostSendWaLinkInvite(w http.ResponseWriter, r *http.Request) {
+	chatID := chi.URLParam(r, "chatID")
+	contact, err := s.queries.GetWaContact(r.Context(), chatID)
+	if err != nil {
+		http.Error(w, "Contact not found", http.StatusNotFound)
+		return
+	}
+
+	var identity *erp.Identity
+	if s.erpClient != nil {
+		if linkResult, lErr := erp.ResolveAndPersistContactIdentity(r.Context(), s.erpClient, s.queries, chatID, contact.ErpPhoneOverride); lErr == nil && linkResult != nil {
+			identity = linkResult.Identity
+		}
+	}
+
+	var msg string
+	if identity != nil {
+		msg = fmt.Sprintf("مرحباً %s! عثرنا على حسابك في النظام بصفتك (%s). هل ترغب في ربط هذا الرقم بحسابك والتواصل مع مساعد صوت؟ أجب بـ 'نعم' للتأكيد.", identity.DisplayName, identity.Role)
+	} else {
+		msg = "أهلاً بك! رقمك غير مسجل في نظام مشالية بعد. يرجى تزويد المسؤول برقم جوالك أو تحديث بياناتك في النظام لربط الحساب."
+	}
+
+	if err := s.waMgr.SendTextMessage(r.Context(), chatID, msg); err != nil {
+		http.Error(w, "Failed to send link invite: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	s.renderWaContactAfterErpAction(w, r, contact)
+}
+
+// handleGetWaContactTools fetches recent tool executions for a contact for the pilot terminal.
+func (s *Server) handleGetWaContactTools(w http.ResponseWriter, r *http.Request) {
+	chatID := chi.URLParam(r, "chatID")
+	tools, err := s.queries.ListToolExecutionsByChat(r.Context(), database.ListToolExecutionsByChatParams{
+		ChatID: chatID,
+		Limit:  20,
+	})
+	if err != nil {
+		tools = []database.ToolExecution{}
+	}
+
+	s.renderTemplate(w, "whatsapp.html", map[string]interface{}{
+		"Tools":       tools,
+		"ChatID":      chatID,
+		"PartialView": "contact_tools",
+		"Partial":     true,
+	})
 }
 
 func (s *Server) handleGetWhatsAppStatus(w http.ResponseWriter, r *http.Request) {
@@ -1206,9 +1318,16 @@ func (s *Server) renderWorkflowsPage(w http.ResponseWriter, r *http.Request, err
 		})
 	}
 
+	activity, err := s.queries.ListRecentWaActivity(r.Context(), 20)
+	if err != nil {
+		activity = []database.WaActivity{}
+	}
+
 	s.renderTemplate(w, "workflow.html", map[string]interface{}{
 		"Username":       r.Context().Value(UsernameContextKey),
 		"Agents":         rows,
+		"Activity":       activity,
+		"Metrics":        s.waMetricsData(r.Context()),
 		"Page":           "workflows",
 		"CSRFToken":      s.ensureCSRFToken(w, r),
 		"Error":          errMsg,
