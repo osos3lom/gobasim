@@ -42,48 +42,25 @@
         </div>
     </div>
 
-    <script>
-    window.switchWfTab = function(tabName) {
-        var tabs = ["builder", "stream", "inspector"];
-        tabs.forEach(function(t) {
-            var panel = document.getElementById("wf-panel-" + t);
-            var btn = document.getElementById("wf-btn-" + t);
-            if (panel) {
-                if (t === tabName) {
-                    panel.style.setProperty("display", "block", "important");
-                } else {
-                    panel.style.setProperty("display", "none", "important");
-                }
-            }
-            if (btn) {
-                if (t === tabName) {
-                    btn.className = "wf-tab-btn px-4 py-2 text-sm font-semibold rounded-t-xl transition duration-200 border-b-2 text-white bg-indigo-950/60 border-indigo-500";
-                } else {
-                    btn.className = "wf-tab-btn px-4 py-2 text-sm font-semibold rounded-t-xl transition duration-200 border-b-2 border-transparent text-gray-400 hover:text-gray-200";
-                }
-            }
-        });
-    };
-    </script>
 
     <!-- Header & Tab Nav -->
     <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-indigo-950/50 pb-3">
         <div class="flex items-center gap-1">
-            <button type="button" id="wf-btn-builder" onclick="window.switchWfTab('builder')"
+            <button type="button" id="wf-btn-builder" data-tab-group="wf" data-tab="builder"
                 class="wf-tab-btn px-4 py-2 text-sm font-semibold rounded-t-xl transition duration-200 border-b-2 text-white bg-indigo-950/60 border-indigo-500">
                 Agent SOUL &amp; Builder
             </button>
-            <button type="button" id="wf-btn-stream" onclick="window.switchWfTab('stream')"
+            <button type="button" id="wf-btn-stream" data-tab-group="wf" data-tab="stream"
                 class="wf-tab-btn px-4 py-2 text-sm font-semibold rounded-t-xl transition duration-200 border-b-2 border-transparent text-gray-400 hover:text-gray-200">
                 Live Execution Stream
             </button>
-            <button type="button" id="wf-btn-inspector" onclick="window.switchWfTab('inspector')"
+            <button type="button" id="wf-btn-inspector" data-tab-group="wf" data-tab="inspector"
                 class="wf-tab-btn px-4 py-2 text-sm font-semibold rounded-t-xl transition duration-200 border-b-2 border-transparent text-gray-400 hover:text-gray-200">
                 Stage Inspector &amp; Audit Logs
             </button>
         </div>
 
-        <button type="button" onclick="document.getElementById('new-agent-dialog').classList.remove('hidden')"
+        <button type="button" data-show="new-agent-dialog"
             class="shrink-0 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl transition duration-200 active:scale-95">
             + New Agent
         </button>
@@ -113,7 +90,7 @@
                         class="w-full bg-[#03060c]/60 border border-indigo-950/80 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-xl px-4 py-3 text-sm text-slate-300 outline-none transition duration-200">
                 </div>
                 <div class="flex justify-end gap-3 pt-2">
-                    <button type="button" onclick="document.getElementById('new-agent-dialog').classList.add('hidden')"
+                    <button type="button" data-hide="new-agent-dialog"
                         class="px-4 py-2 text-gray-400 hover:text-gray-200 text-xs font-semibold rounded-xl transition duration-200">Cancel</button>
                     <button type="submit"
                         class="px-6 py-2.5 bg-gradient-to-r from-indigo-500 to-indigo-700 hover:from-indigo-600 hover:to-indigo-800 text-white font-semibold text-sm rounded-xl transition duration-200 shadow-md shadow-indigo-500/10 active:scale-[0.98]">Create</button>
@@ -458,33 +435,6 @@
     </div>
     <!-- END TAB 3 PANEL -->
 
-    <script>
-    function switchWfTab(tabName) {
-        const tabs = ["builder", "stream", "inspector"];
-        tabs.forEach(t => {
-            const panel = document.getElementById("wf-panel-" + t);
-            const btn = document.getElementById("wf-btn-" + t);
-            if (panel) {
-                if (t === tabName) {
-                    panel.style.setProperty("display", "block", "important");
-                } else {
-                    panel.style.setProperty("display", "none", "important");
-                }
-            }
-            if (btn) {
-                if (t === tabName) {
-                    btn.className = "wf-tab-btn px-4 py-2 text-sm font-semibold rounded-t-xl transition duration-200 border-b-2 text-white bg-indigo-950/60 border-indigo-500";
-                } else {
-                    btn.className = "wf-tab-btn px-4 py-2 text-sm font-semibold rounded-t-xl transition duration-200 border-b-2 border-transparent text-gray-400 hover:text-gray-200";
-                }
-            }
-        });
-    }
-    document.addEventListener("DOMContentLoaded", function() {
-        switchWfTab("builder");
-    });
-    setTimeout(function() { switchWfTab("builder"); }, 50);
-    </script>
 
     <script src="/static/workflow.js" defer></script>
 </div>

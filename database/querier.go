@@ -33,8 +33,6 @@ type Querier interface {
 	GetConversationState(ctx context.Context, chatID string) (ConversationState, error)
 	GetPendingConfirmation(ctx context.Context, chatID string) (PendingConfirmation, error)
 	GetSettings(ctx context.Context) (Setting, error)
-	GetSttHistory(ctx context.Context, limit int32) ([]SttHistory, error)
-	GetTtsHistory(ctx context.Context, limit int32) ([]TtsHistory, error)
 	GetUserByUsername(ctx context.Context, username string) (User, error)
 	GetWaContact(ctx context.Context, chatID string) (WaContact, error)
 	ListAgents(ctx context.Context) ([]Agent, error)
@@ -44,6 +42,11 @@ type Querier interface {
 	ListPublishedAgents(ctx context.Context) ([]Agent, error)
 	ListRecentWaActivity(ctx context.Context, limit int32) ([]WaActivity, error)
 	ListToolExecutionsByChat(ctx context.Context, arg ListToolExecutionsByChatParams) ([]ToolExecution, error)
+	// Perf note: the DISTINCT ON sort key (chat_id, created_at DESC, id DESC) has
+	// no supporting index, so this seq-scans wa_messages and sorts. Verified with
+	// EXPLAIN ANALYZE at ~39 rows: 0.15ms, and Postgres would ignore an index at
+	// that size anyway, so none is added. If wa_messages grows past ~50k rows,
+	// re-run EXPLAIN and consider CREATE INDEX ON wa_messages (chat_id, created_at DESC, id DESC).
 	ListWaChatsSummary(ctx context.Context) ([]ListWaChatsSummaryRow, error)
 	ListWaContacts(ctx context.Context) ([]WaContact, error)
 	ListWaMessagesByChat(ctx context.Context, arg ListWaMessagesByChatParams) ([]WaMessage, error)
@@ -74,7 +77,6 @@ type Querier interface {
 	// Sets (or clears, with an empty string) the phone number an operator wants
 	// used for ERP identity resolution instead of the one derived from chat_id.
 	UpdateWaContactErpOverride(ctx context.Context, arg UpdateWaContactErpOverrideParams) (WaContact, error)
-	UpdateWaContactSettings(ctx context.Context, arg UpdateWaContactSettingsParams) (WaContact, error)
 	// UpsertCollecting parks a tool call that is still missing required args
 	// (F-1 fix). Mirrors UpsertPendingConfirmation's upsert shape exactly, but
 	// with status='collecting' and the extra slot-filling columns populated.

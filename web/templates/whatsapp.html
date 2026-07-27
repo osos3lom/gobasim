@@ -65,41 +65,18 @@
         </div>
     </div>
 
-    <script>
-    window.switchWaTab = function(tabName) {
-        var tabs = ["connection", "contacts", "messages"];
-        tabs.forEach(function(t) {
-            var panel = document.getElementById("wa-panel-" + t);
-            var btn = document.getElementById("wa-btn-" + t);
-            if (panel) {
-                if (t === tabName) {
-                    panel.style.setProperty("display", "block", "important");
-                } else {
-                    panel.style.setProperty("display", "none", "important");
-                }
-            }
-            if (btn) {
-                if (t === tabName) {
-                    btn.className = "wa-tab-btn px-4 py-2.5 text-sm font-semibold rounded-t-xl transition duration-200 border-b-2 text-white bg-indigo-950/60 border-indigo-500";
-                } else {
-                    btn.className = "wa-tab-btn px-4 py-2.5 text-sm font-semibold rounded-t-xl transition duration-200 border-b-2 border-transparent text-gray-400 hover:text-gray-200";
-                }
-            }
-        });
-    };
-    </script>
 
     <!-- Tab nav -->
     <div class="flex items-center gap-1">
-        <button type="button" id="wa-btn-connection" onclick="window.switchWaTab('connection')"
+        <button type="button" id="wa-btn-connection" data-tab-group="wa" data-tab="connection"
             class="wa-tab-btn px-4 py-2.5 text-sm font-semibold rounded-t-xl transition duration-200 border-b-2 text-white bg-indigo-950/60 border-indigo-500">
             Connection &amp; Pairing
         </button>
-        <button type="button" id="wa-btn-contacts" onclick="window.switchWaTab('contacts')"
+        <button type="button" id="wa-btn-contacts" data-tab-group="wa" data-tab="contacts"
             class="wa-tab-btn px-4 py-2.5 text-sm font-semibold rounded-t-xl transition duration-200 border-b-2 border-transparent text-gray-400 hover:text-gray-200">
             Contacts &amp; ERP Pilot
         </button>
-        <button type="button" id="wa-btn-messages" onclick="window.switchWaTab('messages')"
+        <button type="button" id="wa-btn-messages" data-tab-group="wa" data-tab="messages"
             class="wa-tab-btn px-4 py-2.5 text-sm font-semibold rounded-t-xl transition duration-200 border-b-2 border-transparent text-gray-400 hover:text-gray-200">
             Messages &amp; Pilot Terminal
         </button>
@@ -126,7 +103,7 @@
         <div class="w-full max-w-lg p-6 rounded-2xl glass border border-indigo-950/40 space-y-4">
             <div class="flex items-center justify-between border-b border-indigo-950/50 pb-3">
                 <h3 class="text-lg font-bold text-white">System Default Blueprint</h3>
-                <button type="button" onclick="document.getElementById('wa-blueprint-modal').classList.add('hidden')"
+                <button type="button" data-hide="wa-blueprint-modal"
                     class="text-gray-400 hover:text-gray-200 text-sm font-bold p-1">
                     ✕
                 </button>
@@ -174,7 +151,7 @@
                 </div>
 
                 <div class="flex justify-end gap-3 pt-2">
-                    <button type="button" onclick="document.getElementById('wa-blueprint-modal').classList.add('hidden')"
+                    <button type="button" data-hide="wa-blueprint-modal"
                         class="px-4 py-2 text-gray-400 hover:text-gray-200 text-xs font-semibold rounded-xl transition duration-200">
                         Close
                     </button>
@@ -336,7 +313,7 @@
                 class="text-[10px] text-emerald-400 hover:text-emerald-300 font-semibold px-2 py-0.5 transition duration-200">
                 ERP Profile ↗
             </a>
-            <button type="button" onclick="window.toggleWaEditDeck('{{.ChatID}}')"
+            <button type="button" data-toggle="wa-edit-deck-{{.ChatID}}"
                 class="text-[10px] text-indigo-400 hover:text-indigo-300 font-semibold px-2 py-0.5 transition duration-200">
                 Edit
             </button>
@@ -424,14 +401,6 @@
         </div>
     </div>
 </div>
-<script>
-window.toggleWaEditDeck = function(chatID) {
-    var deck = document.getElementById("wa-edit-deck-" + chatID);
-    if (deck) {
-        deck.classList.toggle("hidden");
-    }
-};
-</script>
 
 
 {{end}}
@@ -658,7 +627,7 @@ window.toggleWaEditDeck = function(chatID) {
     <!-- Message input section with 24h guardrail -->
     <div class="p-3 border-t border-indigo-950/50 shrink-0 bg-slate-950/30">
         {{if .WindowOpen}}
-        <form hx-post="/dashboard/whatsapp/chats/{{.ChatID}}/send-text" hx-target="#wa-message-list" hx-swap="beforeend" hx-on::after-request="this.reset()"
+        <form hx-post="/dashboard/whatsapp/chats/{{.ChatID}}/send-text" hx-target="#wa-message-list" hx-swap="beforeend" data-reset-on-success
               class="flex gap-2">
             <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
             <input type="text" name="text" placeholder="Type a message..." required

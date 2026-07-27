@@ -69,4 +69,3 @@ func TestLoadDotEnv(t *testing.T) {
 func TestLoadDotEnv_MissingFileIsNoop(t *testing.T) {
 	_ = config.LoadDotEnv(filepath.Join(t.TempDir(), "missing.env"))
 }
-

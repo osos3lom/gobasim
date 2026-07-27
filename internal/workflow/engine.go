@@ -166,8 +166,6 @@ func NewWorkflowEngine(cfg *config.Config, erpClient *erp.Client, queries databa
 	return e
 }
 
-
-
 // ClassifyIntent routes the conversation by identifying user intentions.
 func (e *WorkflowEngine) ClassifyIntent(ctx context.Context, state *State) error {
 	if len(state.Messages) == 0 {

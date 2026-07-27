@@ -17,6 +17,7 @@ pipeline, and the operator web dashboard — in a single process, on a GCP e2-mi
 | Run the live end-to-end verification (M9) checklist | [M9-CHECKLIST.md](M9-CHECKLIST.md) |
 | See readiness status, the scorecard, roadmap & feature backlog | [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md) |
 | Implement the ERP gateway on the `mshalia` side | [mshalia-side.md](mshalia-side.md) |
+| Understand a choice that looks like an oversight | [DECISIONS.md](DECISIONS.md) |
 
 ## Document map (7 docs)
 

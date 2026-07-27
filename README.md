@@ -9,7 +9,7 @@ One Go binary (`sawt-gateway`) that owns the WhatsApp socket, LLM reasoning loop
 ```
 WhatsApp voice/text
   │  whatsmeow socket (in-process)
-main.go: handleIncomingMessage()
+internal/gateway: HandleIncomingMessage()
   │  1. lookup / auto-create contact
   │  2. audio → ffmpeg OGG→WAV → STT cascade
   │  3. resolve actor identity via ERP (HMAC-signed)
@@ -34,12 +34,27 @@ WhatsApp reply (text + voice)
 - **ffmpeg** on PATH (required for voice notes; set `ALLOW_MISSING_FFMPEG=true` for text-only dev)
 - At least one LLM API key (`NIM_API_KEY` or `OPENAI_API_KEY`)
 
+Only needed if you change SQL or template markup — the committed build outputs
+keep normal development and deploys toolchain-free:
+
+- **sqlc v1.27.0** — regenerates `database/` from `schema.sql` + `query.sql`
+  (`go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.27.0`)
+- **Node 20** — rebuilds `web/static/app.css` via Tailwind (`npm ci`)
+
+CI fails the build if either output is out of sync with its source, so run the
+matching command and commit the result:
+
+```bash
+sqlc generate        # after editing schema.sql or query.sql
+npm run build:css    # after adding/removing CSS classes in web/templates/
+```
+
 ### Setup
 
 ```bash
 # 1. Clone and configure
-cp .env.example .env   # or edit .env directly
-# Fill in DATABASE_URL, API keys, etc.
+cp .env.example .env
+# Fill in DATABASE_URL, SESSION_SECRET, ADMIN_*, and at least one LLM key.
 
 # 2. Run
 go run .
@@ -68,7 +83,7 @@ go test ./... -race -cover
 golangci-lint run
 ```
 
-**141 test functions across 24 test files** covering auth, CSRF, HMAC contracts, intent classification, tool-loop bounds, role filtering, memory, confirmation lifecycle, provider fallback, speech providers (fakes), voice-note store, and a 7-scenario eval suite.
+**279 test functions across 52 test files** covering auth, CSRF, HMAC contracts, intent classification, tool-loop bounds, role filtering, memory, confirmation lifecycle, provider fallback, speech providers (fakes), voice-note store, and a 7-scenario eval suite.
 
 ## Documentation
 
@@ -77,6 +92,7 @@ Detailed docs live in [`docs/`](docs/):
 | Document | Purpose |
 |---|---|
 | [BLUEPRINT.md](docs/BLUEPRINT.md) | Architecture & product intent |
+| [DECISIONS.md](docs/DECISIONS.md) | Why things that look odd are deliberate |
 | [IMPLEMENTATION-PLAN.md](docs/IMPLEMENTATION-PLAN.md) | Readiness scorecard, roadmap & backlog |
 | [DEPLOYMENT.md](docs/DEPLOYMENT.md) | Deploy & ops runbook |
 | [LOCAL-TESTING.md](docs/LOCAL-TESTING.md) | Local test tiers |

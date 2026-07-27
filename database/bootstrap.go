@@ -120,8 +120,8 @@ func RunRetention(ctx context.Context, queries *Queries, days int) {
 		"wa_activity":           queries.RedactWaActivityBefore,
 		"wa_messages":           queries.RedactWaMessagesBefore,
 		"wa_voice_notes":        queries.PurgeWaVoiceNotesBefore,
-		"processed_messages":   queries.PurgeProcessedMessagesBefore,
-		"tool_executions":      queries.PurgeToolExecutionsBefore,
+		"processed_messages":    queries.PurgeProcessedMessagesBefore,
+		"tool_executions":       queries.PurgeToolExecutionsBefore,
 		"pending_confirmations": queries.PurgeExpiredConfirmations,
 	} {
 		if err := fn(ctx, cutoff); err != nil {

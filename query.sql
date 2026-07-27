@@ -20,18 +20,9 @@ WHERE id = 1;
 INSERT INTO stt_history (id, ts, transcript, filename, duration_ms, language)
 VALUES ($1, NOW(), $2, $3, $4, $5);
 
--- name: GetSttHistory :many
-SELECT * FROM stt_history
-ORDER BY ts DESC LIMIT $1;
-
 -- name: CreateTtsHistory :exec
 INSERT INTO tts_history (id, ts, text, model, speed, duration_ms, size_bytes)
 VALUES ($1, NOW(), $2, $3, $4, $5, $6);
-
--- name: GetTtsHistory :many
-SELECT * FROM tts_history
-ORDER BY ts DESC LIMIT $1;
-
 
 -- name: GetAgent :one
 SELECT * FROM agents
@@ -79,7 +70,6 @@ SET name = $2, system_prompt = $3, greeting_message = $4, failure_message = $5,
 WHERE id = $1
 RETURNING *;
 
-
 -- name: GetWaContact :one
 SELECT * FROM wa_contacts
 WHERE chat_id = $1 LIMIT 1;
@@ -90,12 +80,6 @@ VALUES ($1, $2, $3, $4, $5, NOW())
 ON CONFLICT (chat_id) DO UPDATE
 SET name = EXCLUDED.name, enabled = EXCLUDED.enabled, agent_id = EXCLUDED.agent_id,
     prompt_override = EXCLUDED.prompt_override, updated_at = NOW()
-RETURNING *;
-
--- name: UpdateWaContactSettings :one
-UPDATE wa_contacts
-SET enabled = $2, agent_id = $3, updated_at = NOW()
-WHERE chat_id = $1
 RETURNING *;
 
 -- name: UpdateWaContactErpLink :one
@@ -148,6 +132,11 @@ WHERE chat_id = sqlc.arg(chat_id) AND (sqlc.arg(before_seq)::bigint = 0 OR seq <
 ORDER BY seq DESC LIMIT sqlc.arg('limit')::int;
 
 -- name: ListWaChatsSummary :many
+-- Perf note: the DISTINCT ON sort key (chat_id, created_at DESC, id DESC) has
+-- no supporting index, so this seq-scans wa_messages and sorts. Verified with
+-- EXPLAIN ANALYZE at ~39 rows: 0.15ms, and Postgres would ignore an index at
+-- that size anyway, so none is added. If wa_messages grows past ~50k rows,
+-- re-run EXPLAIN and consider CREATE INDEX ON wa_messages (chat_id, created_at DESC, id DESC).
 SELECT * FROM (
     SELECT DISTINCT ON (m.chat_id)
         m.chat_id, m.content AS last_message, m.direction AS last_direction,
