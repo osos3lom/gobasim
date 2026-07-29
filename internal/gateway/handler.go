@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"time"
 
@@ -145,14 +147,58 @@ func HandleIncomingMessage(
 	}
 
 	var text string
+	var isImage, isVideo bool
+	var mediaBytes []byte
+	var mediaMime, mediaName string
+
 	if evt.Message.Conversation != nil {
 		text = *evt.Message.Conversation
 	} else if evt.Message.ExtendedTextMessage != nil && evt.Message.ExtendedTextMessage.Text != nil {
 		text = *evt.Message.ExtendedTextMessage.Text
-	} else if evt.Message.ImageMessage != nil && evt.Message.ImageMessage.Caption != nil {
-		text = *evt.Message.ImageMessage.Caption
-	} else if evt.Message.VideoMessage != nil && evt.Message.VideoMessage.Caption != nil {
-		text = *evt.Message.VideoMessage.Caption
+	} else if evt.Message.ImageMessage != nil {
+		isImage = true
+		if evt.Message.ImageMessage.Caption != nil {
+			text = *evt.Message.ImageMessage.Caption
+		}
+		mediaMime = evt.Message.ImageMessage.GetMimetype()
+		if mediaMime == "" {
+			mediaMime = "image/jpeg"
+		}
+		mediaName = fmt.Sprintf("image_%d.jpg", time.Now().Unix())
+		trace.Logf(ctx, "Inbound: Message contains image. Downloading...")
+		var dErr error
+		mediaBytes, dErr = client.Download(ctx, evt.Message.ImageMessage)
+		if dErr != nil {
+			trace.Logf(ctx, "Inbound: Warning: Failed to download image: %v", dErr)
+		} else {
+			trace.Logf(ctx, "Inbound: Successfully downloaded image %s (%s, %d bytes)", mediaName, mediaMime, len(mediaBytes))
+		}
+	} else if evt.Message.VideoMessage != nil {
+		isVideo = true
+		if evt.Message.VideoMessage.Caption != nil {
+			text = *evt.Message.VideoMessage.Caption
+		}
+		mediaMime = evt.Message.VideoMessage.GetMimetype()
+		if mediaMime == "" {
+			mediaMime = "video/mp4"
+		}
+		mediaName = fmt.Sprintf("video_%d.mp4", time.Now().Unix())
+		trace.Logf(ctx, "Inbound: Message contains video. Downloading...")
+		var dErr error
+		mediaBytes, dErr = client.Download(ctx, evt.Message.VideoMessage)
+		if dErr != nil {
+			trace.Logf(ctx, "Inbound: Warning: Failed to download video: %v", dErr)
+		} else {
+			trace.Logf(ctx, "Inbound: Successfully downloaded video %s (%s, %d bytes)", mediaName, mediaMime, len(mediaBytes))
+		}
+	}
+
+	if text == "" {
+		if isImage {
+			text = "[قام المستخدم بإرسال صورة. يرجى سؤال المستخدم عن اسم أو معرف الحصان المراد إضافة الصورة له]"
+		} else if isVideo {
+			text = "[قام المستخدم بإرسال فيديو. يرجى سؤال المستخدم عن اسم أو معرف الحصان المراد إضافة الفيديو له]"
+		}
 	}
 
 	var identity *erp.Identity
@@ -457,6 +503,33 @@ func HandleIncomingMessage(
 		SendTextReply(ctx, client, evt.Info.Chat, replyText)
 	}
 
+	// Dispatch outbound media files if get_horse_media or add_horse_media returned downloadable media
+	for _, tr := range state.ToolResults {
+		if tr["tool"] == "get_horse_media" || tr["tool"] == "add_horse_media" {
+			if output, ok := tr["output"].(map[string]interface{}); ok {
+				if mediaList, ok := output["media"].([]interface{}); ok {
+					for _, item := range mediaList {
+						if m, ok := item.(map[string]interface{}); ok {
+							dUrl, _ := m["downloadUrl"].(string)
+							kind, _ := m["kind"].(string)
+							mType, _ := m["mimeType"].(string)
+							fName, _ := m["fileName"].(string)
+							if dUrl != "" {
+								trace.Logf(ctx, "Outbound: Transmitting horse media (%s) from URL: %s", kind, dUrl)
+								if sErr := SendMediaFromURL(ctx, client, evt.Info.Chat, dUrl, kind, mType, fName); sErr != nil {
+									trace.Logf(ctx, "Outbound: Failed to send media file to WhatsApp: %v", sErr)
+								}
+							}
+						}
+					}
+				} else if dUrl, ok := output["downloadUrl"].(string); ok && dUrl != "" {
+					trace.Logf(ctx, "Outbound: Transmitting uploaded media from URL: %s", dUrl)
+					_ = SendMediaFromURL(ctx, client, evt.Info.Chat, dUrl, "image", "", "")
+				}
+			}
+		}
+	}
+
 	if replyText != "" {
 		outMsgType := "text"
 		if len(replyAudio) > 0 {
@@ -523,4 +596,108 @@ func SendTextReply(ctx context.Context, client *whatsmeow.Client, chat types.JID
 	if err != nil {
 		trace.Logf(ctx, "Outbound: Failed to send text reply: %v", err)
 	}
+}
+
+// SendImageReply sends an image reply over WhatsApp.
+func SendImageReply(ctx context.Context, client *whatsmeow.Client, chat types.JID, imageBytes []byte, mimeType, caption string) error {
+	if client == nil {
+		return fmt.Errorf("whatsmeow client is nil")
+	}
+	if mimeType == "" {
+		mimeType = "image/jpeg"
+	}
+	resp, err := client.Upload(ctx, imageBytes, whatsmeow.MediaImage)
+	if err != nil {
+		return fmt.Errorf("failed to upload image: %w", err)
+	}
+	fileLen := resp.FileLength
+	if fileLen == 0 {
+		fileLen = uint64(len(imageBytes))
+	}
+	imgMsg := &waE2E.Message{
+		ImageMessage: &waE2E.ImageMessage{
+			URL:           googleProto.String(resp.URL),
+			DirectPath:    googleProto.String(resp.DirectPath),
+			MediaKey:      resp.MediaKey,
+			Mimetype:      googleProto.String(mimeType),
+			FileLength:    googleProto.Uint64(fileLen),
+			FileSHA256:    resp.FileSHA256,
+			FileEncSHA256: resp.FileEncSHA256,
+		},
+	}
+	if caption != "" {
+		imgMsg.ImageMessage.Caption = googleProto.String(caption)
+	}
+	_, err = client.SendMessage(ctx, chat, imgMsg)
+	if err != nil {
+		return fmt.Errorf("failed to send image message: %w", err)
+	}
+	return nil
+}
+
+// SendVideoReply sends a video reply over WhatsApp.
+func SendVideoReply(ctx context.Context, client *whatsmeow.Client, chat types.JID, videoBytes []byte, mimeType, caption string) error {
+	if client == nil {
+		return fmt.Errorf("whatsmeow client is nil")
+	}
+	if mimeType == "" {
+		mimeType = "video/mp4"
+	}
+	resp, err := client.Upload(ctx, videoBytes, whatsmeow.MediaVideo)
+	if err != nil {
+		return fmt.Errorf("failed to upload video: %w", err)
+	}
+	fileLen := resp.FileLength
+	if fileLen == 0 {
+		fileLen = uint64(len(videoBytes))
+	}
+	vidMsg := &waE2E.Message{
+		VideoMessage: &waE2E.VideoMessage{
+			URL:           googleProto.String(resp.URL),
+			DirectPath:    googleProto.String(resp.DirectPath),
+			MediaKey:      resp.MediaKey,
+			Mimetype:      googleProto.String(mimeType),
+			FileLength:    googleProto.Uint64(fileLen),
+			FileSHA256:    resp.FileSHA256,
+			FileEncSHA256: resp.FileEncSHA256,
+		},
+	}
+	if caption != "" {
+		vidMsg.VideoMessage.Caption = googleProto.String(caption)
+	}
+	_, err = client.SendMessage(ctx, chat, vidMsg)
+	if err != nil {
+		return fmt.Errorf("failed to send video message: %w", err)
+	}
+	return nil
+}
+
+// SendMediaFromURL fetches media from a URL and sends it over WhatsApp as an image or video.
+func SendMediaFromURL(ctx context.Context, client *whatsmeow.Client, chat types.JID, mediaURL, kind, mimeType, caption string) error {
+	req, err := http.NewRequestWithContext(ctx, "GET", mediaURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to build media download request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to fetch media from URL: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to fetch media, HTTP status: %d", resp.StatusCode)
+	}
+	mediaBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read media body: %w", err)
+	}
+
+	if mimeType == "" {
+		mimeType = resp.Header.Get("Content-Type")
+	}
+
+	if kind == "video" || strings.HasPrefix(mimeType, "video/") {
+		return SendVideoReply(ctx, client, chat, mediaBytes, mimeType, caption)
+	}
+	return SendImageReply(ctx, client, chat, mediaBytes, mimeType, caption)
 }

@@ -143,6 +143,22 @@ var operationsAgent = agentSpec{
 				"medications": {Type: "string", Description: "JSON array of medication objects: [{\"name\":\"Aspirin\",\"dosage\":\"1 tab\",\"frequency\":\"twice daily\",\"durationDays\":5}]."},
 				"notes":       {Type: "string", Description: "Optional treatment notes."},
 			}, "horseId", "diagnosis", "medications"),
+		tool("add_horse_media",
+			"Attach an image or video media record to a horse.",
+			map[string]PropertySchema{
+				"horseId":     {Type: "string", Description: "Database ID of the horse."},
+				"kind":        {Type: "string", Description: "image or video"},
+				"fileName":    {Type: "string", Description: "File name with extension e.g. photo.jpg or video.mp4."},
+				"downloadUrl": {Type: "string", Description: "Public or storage URL of the uploaded media."},
+				"mimeType":    {Type: "string", Description: "MIME type e.g. image/jpeg or video/mp4."},
+				"isCover":     {Type: "boolean", Description: "Set as primary cover photo for horse."},
+			}, "horseId", "kind", "fileName", "downloadUrl"),
+		tool("get_horse_media",
+			"Get photos and videos for a specific horse.",
+			map[string]PropertySchema{
+				"horseId": {Type: "string", Description: "Database ID of the horse."},
+				"kind":    {Type: "string", Description: "Optional filter: image or video"},
+			}, "horseId"),
 	},
 }
 
@@ -374,6 +390,8 @@ var toolMinRole = map[string]string{
 	"list_incidents":         "viewer",
 	"book_vet_appointment":   "manager",
 	"record_treatment_plan":  "manager",
+	"add_horse_media":        "manager",
+	"get_horse_media":        "viewer",
 
 	// Accounting
 	"list_invoices":  "manager",

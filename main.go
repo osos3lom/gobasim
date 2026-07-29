@@ -191,6 +191,11 @@ func main() {
 	webServer.SetVoiceStore(voiceStore)
 	webServer.SetDB(pool)
 	webServer.SetERPClient(erpClient)
+
+	addHorseWF := workflow.NewAddHorseWorkflow(wfEngine)
+	wfServer := workflow.NewWorkflowServer(addHorseWF)
+	webServer.SetWorkflowServer(wfServer)
+
 	router := webServer.GetRouter()
 
 	server := &http.Server{

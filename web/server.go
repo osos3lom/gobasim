@@ -21,6 +21,7 @@ import (
 	"sawt-go/internal/speech"
 	"sawt-go/internal/voicenotes"
 	waClient "sawt-go/internal/whatsmeow"
+	"sawt-go/internal/workflow"
 	"strings"
 	"sync"
 	"time"
@@ -36,7 +37,7 @@ var templatesFS embed.FS
 
 // staticFS holds embedded compiled assets (Tailwind CSS build output) plus JS helpers.
 //
-//go:embed static/app.css static/workflow.js static/whatsapp.js
+//go:embed static/app.css static/workflow.js static/whatsapp.js static/js/sequential_chat.js
 var staticFS embed.FS
 
 type Server struct {
@@ -52,6 +53,7 @@ type Server struct {
 	voiceStore   *voicenotes.Store // optional; nil disables archival
 	db           dbPinger          // optional; drives the /readyz DB probe
 	erpClient    *erp.Client
+	wfServer     *workflow.WorkflowServer
 }
 
 // dbPinger is the narrow slice of *pgxpool.Pool the readiness probe needs.
@@ -69,6 +71,10 @@ func (s *Server) SetDB(p dbPinger) {
 
 func (s *Server) SetERPClient(client *erp.Client) {
 	s.erpClient = client
+}
+
+func (s *Server) SetWorkflowServer(ws *workflow.WorkflowServer) {
+	s.wfServer = ws
 }
 
 // BlueprintDefaults holds system default settings for new contacts.
@@ -257,6 +263,14 @@ func (s *Server) GetRouter() chi.Router {
 		r.Get("/dashboard/whatsapp/chats/{chatID}/messages", s.handleGetWaMessagesFragment)
 		r.With(s.requireCSRF).Post("/dashboard/whatsapp/chats/{chatID}/send-text", s.handlePostSendWaText)
 		r.With(s.requireCSRF).Post("/dashboard/whatsapp/chats/{chatID}/send-voice", s.handlePostSendWaVoice)
+
+		r.HandleFunc("/ws/workflow", func(w http.ResponseWriter, r *http.Request) {
+			if s.wfServer != nil {
+				s.wfServer.ServeHTTP(w, r)
+			} else {
+				http.Error(w, "Workflow server unavailable", http.StatusServiceUnavailable)
+			}
+		})
 
 		r.Get("/api/logs", s.handleSSELogs)
 	})

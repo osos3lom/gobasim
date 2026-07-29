@@ -44,7 +44,7 @@
 
     <script>
     window.switchWfTab = function(tabName) {
-        var tabs = ["builder", "stream", "inspector"];
+        var tabs = ["builder", "seq", "stream", "inspector"];
         tabs.forEach(function(t) {
             var panel = document.getElementById("wf-panel-" + t);
             var btn = document.getElementById("wf-btn-" + t);
@@ -72,6 +72,10 @@
             <button type="button" id="wf-btn-builder" onclick="window.switchWfTab('builder')"
                 class="wf-tab-btn px-4 py-2 text-sm font-semibold rounded-t-xl transition duration-200 border-b-2 text-white bg-indigo-950/60 border-indigo-500">
                 Agent SOUL &amp; Builder
+            </button>
+            <button type="button" id="wf-btn-seq" onclick="window.switchWfTab('seq')"
+                class="wf-tab-btn px-4 py-2 text-sm font-semibold rounded-t-xl transition duration-200 border-b-2 border-transparent text-gray-400 hover:text-gray-200">
+                🔄 Sequential Workflow Demo
             </button>
             <button type="button" id="wf-btn-stream" onclick="window.switchWfTab('stream')"
                 class="wf-tab-btn px-4 py-2 text-sm font-semibold rounded-t-xl transition duration-200 border-b-2 border-transparent text-gray-400 hover:text-gray-200">
@@ -381,6 +385,45 @@
     </div>
     <!-- END TAB 1 PANEL -->
 
+    <!-- TAB: Sequential Workflow Demo -->
+    <div id="wf-panel-seq" class="space-y-6" style="display: none;">
+        <div class="glass p-6 rounded-2xl border border-indigo-950/40 space-y-6">
+            <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-indigo-950/50 pb-4">
+                <div>
+                    <h3 class="text-lg font-bold text-white flex items-center gap-2">
+                        <span>🔄 Sequential Multi-Agent Workflow</span>
+                        <span class="text-xs text-indigo-400 font-mono bg-indigo-950/60 border border-indigo-900 px-2 py-0.5 rounded">AgenticGoKit Pattern</span>
+                    </h3>
+                    <p class="text-xs text-gray-400 mt-1">2-Agent Pipeline for Adding a Horse: <b>Intake Specialist 🔍</b> &rarr; <b>ERP Registrar 🐎</b></p>
+                </div>
+                <div class="flex items-center gap-2">
+                    <span id="seq-status-badge" class="text-xs font-bold text-gray-400 font-mono border border-slate-800 bg-slate-900 px-2 py-0.5 rounded-full">Connecting...</span>
+                </div>
+            </div>
+
+            <!-- Agent Cards Container (Populated dynamically via WebSocket agent_config event) -->
+            <div id="seq-agent-cards" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <!-- Agent cards rendered by sequential_chat.js -->
+            </div>
+
+            <!-- Input & Execution Controls -->
+            <div class="space-y-3 pt-2">
+                <label for="seq-user-input" class="block text-xs font-bold text-gray-300 uppercase tracking-wider">Horse Intake Request Prompt</label>
+                <div class="flex flex-col sm:flex-row gap-3">
+                    <input type="text" id="seq-user-input"
+                        placeholder="e.g. Register new Arabian mare named Jamilah, gray color, owner Sheikh Ahmed, stall B-04"
+                        value="Register new Arabian mare named Jamilah, gray color, owner Sheikh Ahmed, stall B-04"
+                        class="flex-1 bg-[#03060c]/80 border border-indigo-950/80 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-xl px-4 py-3 text-sm text-slate-200 outline-none transition"
+                        onkeydown="if(event.key==='Enter') window.runSequentialWorkflow()">
+                    <button type="button" id="seq-run-btn" onclick="window.runSequentialWorkflow()"
+                        class="px-6 py-3 bg-gradient-to-r from-indigo-500 to-indigo-700 hover:from-indigo-600 hover:to-indigo-800 text-white font-semibold text-sm rounded-xl transition duration-200 shadow-md shadow-indigo-500/10 active:scale-[0.98] flex items-center justify-center gap-2 shrink-0">
+                        <span>▶ Run Pipeline</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- TAB 2 PANEL: Live Execution Stream -->
     <div id="wf-panel-stream" class="space-y-4" style="display: none;">
         <div class="glass p-6 rounded-2xl border border-indigo-950/40 space-y-4">
@@ -487,5 +530,6 @@
     </script>
 
     <script src="/static/workflow.js" defer></script>
+    <script src="/static/js/sequential_chat.js" defer></script>
 </div>
 {{end}}

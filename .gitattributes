@@ -6,5 +6,5 @@
 *.go text eol=lf
 
 # Deploy scripts run on the Linux VM — CRLF would break the shebang line and
-# any heredocs (e.g. gcp/fetch-secrets.sh).
+# any heredocs.
 *.sh text eol=lf
