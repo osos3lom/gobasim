@@ -20,13 +20,13 @@ func createDummyWAV(numSamples int) []byte {
 
 	// fmt chunk
 	buf.WriteString("fmt ")
-	_ = binary.Write(&buf, binary.LittleEndian, uint32(16)) // Subchunk1Size (16 for PCM)
-	_ = binary.Write(&buf, binary.LittleEndian, uint16(1))  // AudioFormat (1 for PCM)
-	_ = binary.Write(&buf, binary.LittleEndian, uint16(1))  // NumChannels (1 mono)
+	_ = binary.Write(&buf, binary.LittleEndian, uint32(16))    // Subchunk1Size (16 for PCM)
+	_ = binary.Write(&buf, binary.LittleEndian, uint16(1))     // AudioFormat (1 for PCM)
+	_ = binary.Write(&buf, binary.LittleEndian, uint16(1))     // NumChannels (1 mono)
 	_ = binary.Write(&buf, binary.LittleEndian, uint32(16000)) // SampleRate
 	_ = binary.Write(&buf, binary.LittleEndian, uint32(32000)) // ByteRate (16000 * 1 * 2)
-	_ = binary.Write(&buf, binary.LittleEndian, uint16(2))  // BlockAlign
-	_ = binary.Write(&buf, binary.LittleEndian, uint16(16)) // BitsPerSample
+	_ = binary.Write(&buf, binary.LittleEndian, uint16(2))     // BlockAlign
+	_ = binary.Write(&buf, binary.LittleEndian, uint16(16))    // BitsPerSample
 
 	// data chunk
 	buf.WriteString("data")

@@ -269,4 +269,3 @@ func TestGoogleADCSynthesize_PerAgentVoice(t *testing.T) {
 		t.Errorf("expected speaking rate 1.2, got %v", fake.lastReq.AudioConfig.SpeakingRate)
 	}
 }
-

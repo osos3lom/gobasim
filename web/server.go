@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"sawt-go/config"
 	"sawt-go/database"
+	"sawt-go/internal/contacts"
 	"sawt-go/internal/erp"
 	"sawt-go/internal/monitor"
 	"sawt-go/internal/ratelimit"
@@ -37,7 +38,8 @@ var templatesFS embed.FS
 
 // staticFS holds embedded compiled assets (Tailwind CSS build output) plus JS helpers.
 //
-//go:embed static/app.css static/workflow.js static/whatsapp.js static/js/sequential_chat.js
+//go:embed static/app.css static/ui.js static/workflow.js static/whatsapp.js static/logs.js static/htmx.min.js static/js/sequential_chat.js
+
 var staticFS embed.FS
 
 type Server struct {
@@ -84,8 +86,9 @@ type BlueprintDefaults struct {
 	AutoEnable            bool   `json:"auto_enable"`
 }
 
+
 var templateFuncs = template.FuncMap{
-	"waDisplayPhone":   waDisplayPhone,
+	"waDisplayPhone":   contacts.DisplayPhone,
 	"cleanContactName": cleanContactName,
 }
 
@@ -307,8 +310,14 @@ func (s *Server) handleSSELogs(w http.ResponseWriter, r *http.Request) {
 }
 
 func securityHeaders(next http.Handler) http.Handler {
+	// script-src is 'self' only: every script is served from web/static and
+	// embedded in the binary, no inline <script> blocks or on*= handlers
+	// remain (behaviour is bound via data-attributes in static/ui.js), and
+	// no htmx feature that needs eval is used. Adding an inline handler or an
+	// hx-on attribute will silently break under this policy — put the
+	// behaviour in a static .js file instead.
 	const csp = "default-src 'self'; " +
-		"script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com; " +
+		"script-src 'self'; " +
 		"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
 		"font-src 'self' https://fonts.gstatic.com; " +
 		"img-src 'self' data:; " +
@@ -316,7 +325,6 @@ func securityHeaders(next http.Handler) http.Handler {
 		"frame-ancestors 'none'; " +
 		"base-uri 'self'; " +
 		"object-src 'none'"
-
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()

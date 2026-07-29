@@ -130,4 +130,3 @@ func NormalizePhoneForERP(phone string) string {
 	}
 	return digits
 }
-

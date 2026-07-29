@@ -111,4 +111,3 @@ func TestLoadDotEnv_MissingFileIsNoop(t *testing.T) {
 	// Should not panic when the file doesn't exist.
 	_ = config.LoadDotEnv(filepath.Join(t.TempDir(), "does-not-exist.env"))
 }
-

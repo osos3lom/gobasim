@@ -21,6 +21,7 @@ import (
 	"sawt-go/database"
 	"sawt-go/internal/agentcfg"
 	"sawt-go/internal/audio"
+	"sawt-go/internal/contacts"
 	"sawt-go/internal/erp"
 	"sawt-go/internal/monitor"
 	"sawt-go/internal/ratelimit"
@@ -29,7 +30,6 @@ import (
 	"sawt-go/internal/voicenotes"
 	waClient "sawt-go/internal/whatsmeow"
 	"sawt-go/internal/workflow"
-	"sawt-go/web"
 )
 
 const MessageProcessingTimeout = 180 * time.Second
@@ -47,10 +47,18 @@ func (r ClientLIDResolver) ResolvePhoneForLID(ctx context.Context, lidUser strin
 }
 
 // NewContactParams builds initial WaContact parameters for a newly discovered WhatsApp user.
-func NewContactParams(chatID, pushName string, bp web.BlueprintDefaults) database.CreateOrUpdateWaContactParams {
+func NewContactParams(chatID, pushName string, bp contacts.BlueprintDefaults) database.CreateOrUpdateWaContactParams {
+	// Fall back to the contact's phone number only when WhatsApp gave us no
+	// push name. contacts.DisplayPhone returns "" for a "@lid" chat id, whose
+	// digits are an opaque WhatsApp identifier rather than a phone number —
+	// in that case use the generic placeholder, because this name is rendered
+	// unconditionally in the dashboard and must never surface a raw chat id.
 	name := strings.TrimSpace(pushName)
 	if name == "" {
-		name = waDisplayPhone(chatID)
+		name = contacts.DisplayPhone(chatID, nil)
+	}
+	if name == "" {
+		name = contacts.GenericContactName
 	}
 
 	var agentID *string
@@ -69,14 +77,6 @@ func NewContactParams(chatID, pushName string, bp web.BlueprintDefaults) databas
 		AgentID:        agentID,
 		PromptOverride: prompt,
 	}
-}
-
-func waDisplayPhone(chatID string) string {
-	parts := strings.Split(chatID, "@")
-	if len(parts) == 0 {
-		return chatID
-	}
-	return "+" + parts[0]
 }
 
 // HandleIncomingMessage is the main pipeline handler for incoming WhatsApp messages.
@@ -135,7 +135,7 @@ func HandleIncomingMessage(
 
 	contact, err := queries.GetWaContact(ctx, evt.Info.Chat.String())
 	if err != nil {
-		var bp web.BlueprintDefaults
+		var bp contacts.BlueprintDefaults
 		if settings, sErr := queries.GetSettings(ctx); sErr == nil && len(settings.BotConfig) > 0 {
 			_ = json.Unmarshal(settings.BotConfig, &bp)
 		}

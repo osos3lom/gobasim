@@ -8,11 +8,14 @@
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎙️</text></svg>">
     <!-- Compiled Tailwind CSS (see package.json / web/static/src/input.css) -->
     <link rel="stylesheet" href="/static/app.css">
-    <!-- HTMX Library -->
-    <script src="https://unpkg.com/htmx.org@1.9.10"
-            integrity="sha384-D1Kt99CQMDuVetoL1lrYwg5t+9QdHe7NLX/SoJYkXDFfX37iInKRy5xLSi8nO7UC"
-            crossorigin="anonymous"></script>
-    <script>window.htmx || document.write('<script src="/static/htmx.min.js"><\/script>')</script>
+    <!-- HTMX 1.9.10, vendored into web/static and embedded in the binary
+         (see the //go:embed list in web/server.go). Served from our own
+         origin on purpose: every control on this dashboard is htmx-driven,
+         so a CDN outage would silently reduce the console to read-only.
+         Self-hosting also lets the CSP drop the unpkg.com allowance. -->
+    <script src="/static/htmx.min.js"></script>
+    <!-- Shared data-attribute UI behaviour (tabs, show/hide). CSP-clean. -->
+    <script src="/static/ui.js" defer></script>
 
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -91,7 +94,7 @@
                     🏢 Mshalia ERP Control Panel
                 </a>
                 {{if eq .Page "whatsapp"}}
-                <button type="button" onclick="document.getElementById('wa-blueprint-modal').classList.remove('hidden')"
+                <button type="button" data-show="wa-blueprint-modal"
                     class="px-3 py-1.5 bg-indigo-900/60 border border-indigo-700/50 hover:bg-indigo-800 text-gray-200 text-xs font-semibold rounded-lg transition duration-200 flex items-center gap-1.5 shadow-sm">
                     ⚙️ Default Blueprint
                 </button>

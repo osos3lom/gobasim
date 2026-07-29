@@ -5,6 +5,8 @@ sawt-gateway
 # Local environment / secrets
 .env
 .env.*
+# ...but the placeholder template must be tracked (onboarding depends on it).
+!.env.example
 
 # Local STT models
 models/
@@ -17,6 +19,10 @@ voice-spool/
 
 # Test coverage output
 coverage.out
+coverage
+
+# Local scratch space (throwaway binaries, experiments)
+scratch/
 
 # Editor/OS noise
 .DS_Store

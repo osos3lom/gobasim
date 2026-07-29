@@ -538,71 +538,6 @@ func (q *Queries) GetSettings(ctx context.Context) (Setting, error) {
 	return i, err
 }
 
-const getSttHistory = `-- name: GetSttHistory :many
-SELECT id, ts, transcript, filename, duration_ms, language FROM stt_history
-ORDER BY ts DESC LIMIT $1
-`
-
-func (q *Queries) GetSttHistory(ctx context.Context, limit int32) ([]SttHistory, error) {
-	rows, err := q.db.Query(ctx, getSttHistory, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []SttHistory
-	for rows.Next() {
-		var i SttHistory
-		if err := rows.Scan(
-			&i.ID,
-			&i.Ts,
-			&i.Transcript,
-			&i.Filename,
-			&i.DurationMs,
-			&i.Language,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const getTtsHistory = `-- name: GetTtsHistory :many
-SELECT id, ts, text, model, speed, duration_ms, size_bytes FROM tts_history
-ORDER BY ts DESC LIMIT $1
-`
-
-func (q *Queries) GetTtsHistory(ctx context.Context, limit int32) ([]TtsHistory, error) {
-	rows, err := q.db.Query(ctx, getTtsHistory, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []TtsHistory
-	for rows.Next() {
-		var i TtsHistory
-		if err := rows.Scan(
-			&i.ID,
-			&i.Ts,
-			&i.Text,
-			&i.Model,
-			&i.Speed,
-			&i.DurationMs,
-			&i.SizeBytes,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const getUserByUsername = `-- name: GetUserByUsername :one
 SELECT id, username, password_hash, created_at FROM users
 WHERE username = $1 LIMIT 1
@@ -988,6 +923,11 @@ type ListWaChatsSummaryRow struct {
 	ContactErpPhoneOverride    *string     `json:"contact_erp_phone_override"`
 }
 
+// Perf note: the DISTINCT ON sort key (chat_id, created_at DESC, id DESC) has
+// no supporting index, so this seq-scans wa_messages and sorts. Verified with
+// EXPLAIN ANALYZE at ~39 rows: 0.15ms, and Postgres would ignore an index at
+// that size anyway, so none is added. If wa_messages grows past ~50k rows,
+// re-run EXPLAIN and consider CREATE INDEX ON wa_messages (chat_id, created_at DESC, id DESC).
 func (q *Queries) ListWaChatsSummary(ctx context.Context) ([]ListWaChatsSummaryRow, error) {
 	rows, err := q.db.Query(ctx, listWaChatsSummary)
 	if err != nil {
@@ -1424,40 +1364,6 @@ type UpdateWaContactErpOverrideParams struct {
 // used for ERP identity resolution instead of the one derived from chat_id.
 func (q *Queries) UpdateWaContactErpOverride(ctx context.Context, arg UpdateWaContactErpOverrideParams) (WaContact, error) {
 	row := q.db.QueryRow(ctx, updateWaContactErpOverride, arg.ChatID, arg.ErpPhoneOverride)
-	var i WaContact
-	err := row.Scan(
-		&i.ChatID,
-		&i.Name,
-		&i.Enabled,
-		&i.AgentID,
-		&i.PromptOverride,
-		&i.UpdatedAt,
-		&i.ErpUid,
-		&i.ErpDisplayName,
-		&i.ErpOrgID,
-		&i.ErpRole,
-		&i.ErpUnresolvedReason,
-		&i.ErpResolvedAt,
-		&i.ErpPhoneOverride,
-	)
-	return i, err
-}
-
-const updateWaContactSettings = `-- name: UpdateWaContactSettings :one
-UPDATE wa_contacts
-SET enabled = $2, agent_id = $3, updated_at = NOW()
-WHERE chat_id = $1
-RETURNING chat_id, name, enabled, agent_id, prompt_override, updated_at, erp_uid, erp_display_name, erp_org_id, erp_role, erp_unresolved_reason, erp_resolved_at, erp_phone_override
-`
-
-type UpdateWaContactSettingsParams struct {
-	ChatID  string  `json:"chat_id"`
-	Enabled bool    `json:"enabled"`
-	AgentID *string `json:"agent_id"`
-}
-
-func (q *Queries) UpdateWaContactSettings(ctx context.Context, arg UpdateWaContactSettingsParams) (WaContact, error) {
-	row := q.db.QueryRow(ctx, updateWaContactSettings, arg.ChatID, arg.Enabled, arg.AgentID)
 	var i WaContact
 	err := row.Scan(
 		&i.ChatID,

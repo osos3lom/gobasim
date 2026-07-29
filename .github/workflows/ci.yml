@@ -16,16 +16,59 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # Needed only by the CSS drift check below; the Go build and the
+      # deployed binary remain Node-free.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
       - name: Build
         run: go build ./...
 
       - name: Vet
         run: go vet ./...
 
+      - name: Format check
+        run: |
+          UNFORMATTED=$(gofmt -l . | grep -v '^node_modules/' || true)
+          if [ -n "$UNFORMATTED" ]; then
+            echo "These files are not gofmt-clean:"
+            echo "$UNFORMATTED"
+            echo "Run: gofmt -w ."
+            exit 1
+          fi
+
+      # database/*.go is sqlc output from schema.sql + query.sql, and it is
+      # committed so the build stays toolchain-free. Regenerate and fail on any
+      # diff — hand-editing generated code has happened here before, and it
+      # silently decouples the Go layer from the SQL it claims to mirror.
+      - name: sqlc drift check
+        run: |
+          go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.27.0
+          sqlc generate
+          if ! git diff --exit-code -- database/; then
+            echo "database/ is out of sync with query.sql — run 'sqlc generate' and commit."
+            exit 1
+          fi
+
       - name: Lint
         uses: golangci/golangci-lint-action@v7
         with:
           version: v2.12.2
+
+      # web/static/app.css is Tailwind output, committed so deploys stay
+      # Node-free. It has drifted before — markup shipped referencing utility
+      # classes that were absent from the compiled stylesheet, so those
+      # elements silently rendered unstyled.
+      - name: CSS drift check
+        run: |
+          npm ci
+          npm run build:css
+          if ! git diff --exit-code -- web/static/app.css; then
+            echo "web/static/app.css is stale — run 'npm run build:css' and commit."
+            exit 1
+          fi
 
       - name: Test
         run: go test ./... -race -coverprofile=coverage.out -covermode=atomic -coverpkg=./...
