@@ -233,7 +233,7 @@ Legend: **R** = required, **P** = required for that feature path, **○** = opti
 | `LOG_FORMAT` | ○ | `text` | `json` emits structured `log/slog` lines (with `trace_id`) for Cloud Logging; default is human-readable text. |
 | `NIM_API_KEY` | P | — | Primary LLM (NVIDIA NIM, OpenAI-compatible). **Secret.** |
 | `NIM_BASE_URL` | ○ | `https://integrate.api.nvidia.com/v1` | Primary LLM endpoint. |
-| `NIM_MODEL` | ○ | `meta/llama-3.3-70b-instruct` | Primary LLM model id. |
+| `NIM_MODEL` | ○ | `meta/llama-3.1-70b-instruct` | Primary LLM model id. |
 | `OPENAI_API_KEY` | ○ | — | Fallback LLM. **Secret.** |
 | `OPENAI_API_BASE` | ○ | `https://api.openai.com/v1` | Fallback LLM endpoint. |
 | `LLM_FALLBACK_MODEL` | ○ | `gpt-4o-mini` | Fallback LLM model id. |
@@ -782,14 +782,14 @@ Each item notes what the code **already does** vs. what you must **add**.
 
 - **Already:** all UI is rendered through Go's `html/template`, which
   context-escapes by default. A strict **CSP** is sent on every response
-  (`default-src 'self'`; `script-src 'self' https://unpkg.com`;
+  (`default-src 'self'`; `script-src 'self'` (HTMX is vendored into
+  `web/static/htmx.min.js` and embedded in the binary — no CDN dependency);
   `object-src 'none'`; `frame-ancestors 'none'`) plus `X-Content-Type-Options: nosniff`.
   The one deliberate `template.URL` cast is for a server-generated QR **PNG data
   URI**, not user input.
 - **Add:** avoid introducing raw `template.HTML`/`template.JS` on user-controlled
-  data. To drop the CDN dependency entirely, **self-host HTMX and the font** so
-  `script-src`/`font-src` can be `'self'` only (also removes an external-availability
-  and supply-chain surface).
+  data. Keep all behaviour in static `.js` files (not `hx-on` attributes, which
+  require `'unsafe-eval'`) — enforced by `TestCSPDisallowsInlineAndEvalScripts`.
 
 ### 14.6 Input validation & trusted proxy
 

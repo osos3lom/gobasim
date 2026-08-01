@@ -38,7 +38,11 @@ Same HMAC on both sides (`HMAC-SHA256(secret, "{ts}.{rawBody}")`, `x-swa-signatu
 **Already wired for you:** a shared `AGENT_GATEWAY_SECRET` in both `mshalia/.env.local` and this
 repo's gitignored `.env`; `MSHALIA_API_URL=http://localhost:3000`; `SECURE_COOKIE=false`.
 
-**Start mshalia** (own terminal, from `C:\Users\Asus\Documents\GitHub\mshalia`):
+> [!NOTE]
+> The config default for `MSHALIA_API_URL` is `http://localhost:3001`. For local testing you
+> **must** set `MSHALIA_API_URL=http://localhost:3000` in your `.env` (Next.js dev server port).
+
+**Start mshalia** (own terminal, from your local `mshalia` clone):
 
 ```powershell
 npm run dev          # Next.js dev server on http://localhost:3000  (deps already installed)

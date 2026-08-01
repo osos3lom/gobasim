@@ -41,9 +41,9 @@ the HMAC-signed ERP client (`internal/erp`), conversation memory + risk-gated co
 **Built and code-complete** (verified in-repo):
 
 - WhatsApp transport: Postgres device store, QR + phone-code pairing, reconnect.
-- STT (4-provider cascade) and TTS (3-provider cascade), key-driven fallback.
+- STT (5-provider cascade) and TTS (3-provider cascade), key-driven fallback.
 - LLM reasoning: intent classification → per-agent tool loop (max 4 iterations), NIM →
-  OpenAI-compatible fallback. **39 tools across 6 agents**, role-gated, financial writes
+  OpenAI-compatible fallback. **41 tools across 6 agents**, role-gated, financial writes
   confirmation-gated at `high` risk with required idempotency keys.
 - Cross-turn memory (per-agent `max_history`, default 8, + rolling summary) and a durable,
   single-slot confirmation flow (10-minute TTL) for medium/high-risk tools.
@@ -63,7 +63,7 @@ local `mshalia`** (port 3000) — see [`M9-CHECKLIST.md`](M9-CHECKLIST.md). Two 
 previously believed blocking are resolved:
 - The identity blocker (super_admin `966546906905` resolving with no org) is fixed by the
   `DEFAULT_ORG_ID` fallback (`internal/erp/fallback.go`) and **verified** via `cmd/wfcli`.
-- **The `mshalia` gateway tools exist** — all **39 tool ids are implemented with real handlers and
+- **The `mshalia` gateway tools exist** — all **41 tool ids are implemented with real handlers and
   match the Go client id-for-id**; the HMAC contract matches exactly; `identity/resolve` works.
   (The prior claim that they "`404`" was stale.) Verified live: identity resolve, `DEFAULT_ORG`
   fallback, classify, tool loop with self-correction, RBAC filtering, the confirmation gate, and a
@@ -148,8 +148,8 @@ Effort is engineering-days for one competent Go dev.
   the default-org fallback for privileged actors (`internal/erp/fallback.go`, `DEFAULT_ORG_ID`) was
   confirmed via `cmd/wfcli` — `0546906905` → `org-demo` → `operations` → `list_horses` executed
   against a local `mshalia`. Remaining: the same over real WhatsApp voice against the deployed
-  `mshalia` (all 39 tools).
-- **Evidence:** `main.go:handleIncomingMessage`; `internal/workflow/engine.go`;
+  `mshalia` (all 41 tools).
+- **Evidence:** `main.go` (dispatches to `internal/gateway.HandleIncomingMessage`); `internal/workflow/engine.go`;
   `internal/erp/fallback.go`; `internal/speech/{stt,tts}.go`; `internal/whatsmeow/client.go`.
 - **Missing:** M9 sign-off against a **deployed** `mshalia` + the real-WhatsApp voice round-trip (the
   ERP path is verified against a **local** `mshalia`, M9-CHECKLIST); SAR amount thresholds within the
@@ -344,7 +344,7 @@ Ordered by production-blocking priority. Priority ∈ {P0, P1, P2, P3}; effort i
 
 - **2a. M9 live verification (partial — complete the ERP path)** — P0 · 2–3 days
   (coordination-bound). A partial run is done (log below); identity resolution (D-6a) is now fixed
-  and verified locally via `cmd/wfcli`. Remaining: point at a deployed `mshalia` with all 39 tools
+  and verified locally via `cmd/wfcli`. Remaining: point at a deployed `mshalia` with all 41 tools
   live, and run the 7 eval scenarios (`internal/workflow/eval_test.go`) as real voice + text
   WhatsApp conversations with `DEFAULT_ORG_ID` set. **DoD:** each scenario replies correctly;
   operations writes go through confirmation; failures triaged and fixed.
@@ -498,8 +498,8 @@ first; everything reads from it). Each carries the standard DoD: code complete �
 - [ ] Real-WhatsApp voice round-trip of a confirmation-gated write (P0)
 
 **External dependency (`mshalia`)**
-- [x] All 39 gateway tools implemented with server-side role enforcement + idempotency dedup (verified live, local)
-- [ ] Confirm the 39 tools are deployed to the **production** `mshalia`; `client`-role Firestore index added (P1)
+- [x] All 41 gateway tools implemented with server-side role enforcement + idempotency dedup (verified live, local)
+- [ ] Confirm the 41 tools are deployed to the **production** `mshalia`; `client`-role Firestore index added (P1)
 
 **Backup & DR**
 - [ ] Neon PITR confirmed; scheduled `pg_dump` running (P2)

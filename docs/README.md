@@ -35,7 +35,7 @@ pipeline, and the operator web dashboard — in a single process, on a GCP e2-mi
   Ready %** KPI, a 15-category scorecard, the risk register, the closed agentic-gateway audit, a
   prioritized go-live roadmap, and the dashboard/observability feature backlog (Epics H/O/S/T).
 - **[mshalia-side.md](mshalia-side.md)** — the external brief for the `mshalia` ERP team: the exact
-  HMAC contract and the 39 tools (across 6 agents) our client already calls.
+  HMAC contract and the 41 tools (across 6 agents) our client already calls.
 
 > **History note.** Docs for the earlier three-runtime design (Next.js dashboard + Python LangGraph
 > backend + a separate Go gateway) were removed — they no longer match this consolidated

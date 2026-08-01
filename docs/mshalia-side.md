@@ -3,10 +3,10 @@
 > **Audience:** the `mshalia` (Next.js + Firestore ERP) development team.
 > **From:** the `sawt-gateway` (Go / WhatsApp assistant) team.
 > **Purpose:** `sawt-gateway` ships a generic client that calls your ERP Agent Gateway over a signed
-> HTTP contract for **39 tool ids across 6 agents** (operations, accounting, administration, client
+> HTTP contract for **41 tool ids across 6 agents** (operations, accounting, administration, client
 > self-service, sales, breeding — see §4).
 >
-> **Status (2026-07-13):** ✅ **all 39 endpoints are implemented in `mshalia`** (`app/api/agent/v1/*`
+> **Status (2026-07-13):** ✅ **all 41 endpoints are implemented in `mshalia`** (`app/api/agent/v1/*`
 > + `lib/agent-gateway/tools/*`), match these ids **id-for-id**, and were **verified live** against a
 > local `mshalia` — `identity/resolve`, the HMAC contract, `list_horses` (read), and `register_horse`
 > (confirmation-gated write) all round-tripped correctly (see `sawt-gateway/docs/M9-CHECKLIST.md`).
@@ -342,7 +342,7 @@ our client `json.Unmarshal`s the body and fails hard on non-JSON).
 
 After implementing §2–§6, publish **`mshalia-agent-gateway-reference.md`** containing:
 
-1. **Per-tool reference** for all 39 tool ids (§4):
+1. **Per-tool reference** for all 41 tool ids (§4):
    exact request `args` schema, exact success `data` schema, `permissions {scopes, minRole}`,
    `risk`, `idempotent`, `rollback`, and `failureModes[]`.
 2. **Error catalogue** — every `code` your gateway can return and when.
@@ -361,7 +361,7 @@ your `data` shapes differ from what our prompts expect, we adjust prompts/schema
 
 The integration is "done" when:
 
-- [ ] A request signed with a valid vector returns **200** for each of the 39 tool ids (§4).
+- [ ] A request signed with a valid vector returns **200** for each of the 41 tool ids (§4).
 - [ ] A request with a **skewed timestamp** (> ±5 min) is rejected with **401**.
 - [ ] A request with a **bad signature** is rejected with **401**.
 - [ ] An **unknown tool id** returns a structured **404** JSON body (not HTML).
